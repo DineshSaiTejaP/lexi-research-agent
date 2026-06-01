@@ -16,6 +16,15 @@ from tools import ALL_TOOLS
 
 load_dotenv()
 
+# On Streamlit Cloud, secrets come from st.secrets rather than .env
+try:
+    import streamlit as st
+    for key in ["GOOGLE_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "CHROMA_PERSIST_DIR", "TOP_K_RETRIEVAL"]:
+        if key in st.secrets and not os.environ.get(key):
+            os.environ[key] = st.secrets[key]
+except Exception:
+    pass  # Running locally without Streamlit context
+
 SYSTEM_PROMPT = """\
 You are Lexi, an AI legal research assistant specialising in Indian court judgments.
 You have access to a corpus of court judgments and three search tools.
