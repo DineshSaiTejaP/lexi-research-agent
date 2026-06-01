@@ -1,0 +1,46 @@
+{
+    "description": "Gold standard relevant judgment IDs for Mrs. Lakshmi Devi motor accident case. These are judgment IDs that should be retrieved by a well-performing agent. To be filled in after reviewing the actual corpus.",
+    "case_brief": "Motor accident death claim. Commercial truck. Unlicensed driver. National Insurance Co. denying liability.",
+    "supporting_precedents": {
+        "description": "Judgments that support the claimant's case (insurer must pay despite unlicensed driver)",
+        "doc_ids": [],
+        "notes": "Look for: Section 149 MV Act cases, pay-and-recover doctrine, third-party claims where insurer held liable despite policy breach"
+    },
+    "adverse_precedents": {
+        "description": "Judgments that support the insurer's position (policy void due to breach)",
+        "doc_ids": [],
+        "notes": "Look for: cases where insurer absolved due to fundamental policy breach, cases distinguishing third-party vs own-damage claims"
+    },
+    "general_relevant": {
+        "description": "Any judgment relevant to motor accident compensation, MACT claims, or similar facts",
+        "doc_ids": [],
+        "notes": "Includes: compensation quantum cases, dependency calculation, contributory negligence, commercial vehicle liability"
+    },
+    "eval_queries": [
+        {
+            "query": "Find precedents supporting Mrs. Lakshmi Devi's claim against the insurance company",
+            "expected_themes": ["Section 149", "insurer liability", "unlicensed driver", "third party", "pay and recover"],
+            "query_type": "deep_research"
+        },
+        {
+            "query": "Which judgments involve commercial vehicles?",
+            "expected_themes": ["commercial vehicle", "truck", "lorry", "goods vehicle"],
+            "query_type": "general"
+        },
+        {
+            "query": "Find adverse precedents the insurance company could use against the claimant",
+            "expected_themes": ["policy breach", "no liability", "insurer absolved", "void policy"],
+            "query_type": "deep_research"
+        },
+        {
+            "query": "What compensation range is realistic for a 42-year-old with monthly income of Rs 35000?",
+            "expected_themes": ["compensation", "multiplier", "income", "dependency", "loss of dependency"],
+            "query_type": "deep_research"
+        },
+        {
+            "query": "Which judgments involve Section 149 of the Motor Vehicles Act?",
+            "expected_themes": ["Section 149", "Motor Vehicles Act", "insurer liability"],
+            "query_type": "general"
+        }
+    ]
+}

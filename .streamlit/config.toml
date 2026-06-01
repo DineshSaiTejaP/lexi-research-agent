@@ -1,0 +1,5 @@
+# Streamlit Cloud deployment config
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false

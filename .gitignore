@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+.DS_Store
+data/judgments/*.pdf
+eval/eval_raw_results.json
+# chroma_db/ is intentionally committed for Streamlit Cloud deployment
