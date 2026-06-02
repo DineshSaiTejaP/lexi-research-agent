@@ -22,8 +22,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-CORPUS_DIR = Path(os.getenv("CORPUS_DIR", BASE_DIR / "data" / "judgments"))
-CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "chroma_db"))
+CORPUS_DIR = (BASE_DIR / os.getenv("CORPUS_DIR", "data/judgments")).resolve()
+CHROMA_DIR = str((BASE_DIR / os.getenv("CHROMA_PERSIST_DIR", "chroma_db")).resolve())
 COLLECTION = "lexi_judgments"
 CHUNK_SIZE = 800    # characters (~200 tokens)
 CHUNK_OVERLAP = 100
@@ -133,11 +133,11 @@ def main():
 
     print("Connecting to ChromaDB...")
     db = chromadb.PersistentClient(path=CHROMA_DIR)
-    try:
-        db.delete_collection(COLLECTION)
-    except Exception:
-        pass
-    collection = db.create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
+    collection = db.get_or_create_collection(COLLECTION, metadata={"hnsw:space": "cosine"})
+    
+    if collection.count() > 0:
+        print(f"Collection already has {collection.count()} documents. Reusing it.")
+        return
 
     all_texts, all_metas, all_ids = [], [], []
 

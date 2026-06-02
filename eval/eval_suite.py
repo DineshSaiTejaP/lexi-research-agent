@@ -289,7 +289,7 @@ def run_evaluation():
         answer = result["answer"]
         steps = result["steps"]
 
-        print(f"  ✅ Agent responded in {elapsed:.1f}s")
+        print(f"  [OK] Agent responded in {elapsed:.1f}s")
 
         # Evaluate all 4 dimensions
         precision = eval_precision(answer, steps, query_type, expected_themes)

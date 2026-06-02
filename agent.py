@@ -235,20 +235,63 @@ def run_agent(query: str) -> dict:
                 context_blocks.append(f"Observation from {action.tool}:\n{observation}")
             context = "\n\n".join(context_blocks)
             
-            # Call 1: Supporting Precedents
-            res1 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Supporting Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Legal principle | Why it helps\n\nContext:\n{context}")])
-            supp = res1.content
-            _callback.steps.append({"type": "thought", "content": "Generated Supporting Precedents section."})
+            # Chunk context if too large (approx 15000 chars ~ 3000 tokens)
+            max_chars_per_call = 12000
             
-            # Call 2: Adverse Precedents
-            res2 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Adverse Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Risk: HIGH/MEDIUM/LOW | How to counter\n\nContext:\n{context}")])
-            adv = res2.content
-            _callback.steps.append({"type": "thought", "content": "Generated Adverse Precedents section."})
+            # Divide context blocks into batches to stay within token limits
+            batches = []
+            current_batch = []
+            current_len = 0
+            for block in context_blocks:
+                if current_len + len(block) > max_chars_per_call and current_batch:
+                    batches.append("\n\n".join(current_batch))
+                    current_batch = [block]
+                    current_len = len(block)
+                else:
+                    current_batch.append(block)
+                    current_len += len(block)
+            if current_batch:
+                batches.append("\n\n".join(current_batch))
             
-            # Call 3: Strategy Recommendation
-            res3 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Strategy Recommendation' section for the query: '{query}'. Format: Priority arguments, realistic compensation range, key risks, next steps.\n\nContext:\n{context}")])
-            strat = res3.content
-            _callback.steps.append({"type": "thought", "content": "Generated Strategy Recommendation section."})
+            # If still only 1 batch but it's very large, fallback to string splitting
+            if len(batches) == 1 and len(batches[0]) > max_chars_per_call:
+                b_text = batches[0]
+                batches = [b_text[i:i+max_chars_per_call] for i in range(0, len(b_text), max_chars_per_call)]
+                
+            supp_parts, adv_parts, strat_parts = [], [], []
+            
+            print(f"\n[SYSTEM] Starting DIVIDE_GENERATION over {len(batches)} batch(es)...\n", flush=True)
+
+            for i, batch_context in enumerate(batches):
+                print(f"[SYSTEM] Generating Supporting Precedents (Batch {i+1}/{len(batches)})...", flush=True)
+                # Call 1: Supporting Precedents
+                res1 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Supporting Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Legal principle | Why it helps\n\nContext (Part {i+1}/{len(batches)}):\n{batch_context}")])
+                supp_parts.append(res1.content)
+                
+                print(f"[SYSTEM] Generating Adverse Precedents (Batch {i+1}/{len(batches)})...", flush=True)
+                # Call 2: Adverse Precedents
+                res2 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Adverse Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Risk: HIGH/MEDIUM/LOW | How to counter\n\nContext (Part {i+1}/{len(batches)}):\n{batch_context}")])
+                adv_parts.append(res2.content)
+                
+                # Call 3: Strategy Recommendation
+                if len(batches) == 1:
+                    print(f"[SYSTEM] Generating Strategy Recommendation (Batch 1/1)...", flush=True)
+                    res3 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Strategy Recommendation' section for the query: '{query}'. Format: Priority arguments, realistic compensation range, key risks, next steps.\n\nContext:\n{batch_context}")])
+                    strat_parts.append(res3.content)
+                    
+            supp = "\n\n".join(supp_parts)
+            adv = "\n\n".join(adv_parts)
+            
+            if len(batches) > 1:
+                print(f"\n[SYSTEM] Generating final Strategy Recommendation based on aggregated precedents...", flush=True)
+                # One final call for Strategy based on the aggregated precedents
+                res3 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following supporting and adverse precedents, write the '### Strategy Recommendation' section for the query: '{query}'. Format: Priority arguments, realistic compensation range, key risks, next steps.\n\nSupporting:\n{supp}\n\nAdverse:\n{adv}")])
+                strat = res3.content
+            else:
+                strat = strat_parts[0]
+                
+            print(f"\n[SYSTEM] DIVIDE_GENERATION completed successfully.\n" + "="*50 + "\n", flush=True)
+            _callback.steps.append({"type": "thought", "content": "Generated Supporting, Adverse and Strategy sections safely."})
             
             output = f"{supp}\n\n{adv}\n\n{strat}"
 
@@ -258,9 +301,10 @@ def run_agent(query: str) -> dict:
         if _is_rate_limit(exc):
             wait = _parse_retry_delay(msg, default=30)
             friendly = (
-                f"⏳ **Rate limit reached after all retries.**\n\n"
+                f"**Rate limit reached after all retries.**\n\n"
                 f"The API suggests waiting **{wait:.0f} seconds** before trying again.\n"
                 f"Please wait a moment and resubmit your query."
             )
             return {"answer": friendly, "steps": _callback.steps, "error": friendly}
+
         return {"answer": f"Error: {msg}", "steps": _callback.steps, "error": msg}

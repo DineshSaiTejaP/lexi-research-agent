@@ -10,12 +10,15 @@ import os
 from functools import lru_cache
 
 import chromadb
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 
 load_dotenv()
 
-CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+CHROMA_DIR = str((BASE_DIR / os.getenv("CHROMA_PERSIST_DIR", "chroma_db")).resolve())
 COLLECTION_NAME = "lexi_judgments"
 TOP_K = int(os.getenv("TOP_K_RETRIEVAL", "5"))
 
