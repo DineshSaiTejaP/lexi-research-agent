@@ -51,9 +51,8 @@ def _format(results: list[dict]) -> str:
     lines = [f"Found {len(results)} results via keyword search:\n"]
     for i, r in enumerate(results, 1):
         lines.append(
-            f"{i}. [{r['doc_id']}] {r['case_name']} ({r['court']}, {r['year']})\n"
-            f"   BM25: {r['score']} | Topics: {', '.join(r['topics']) or 'general'}\n"
-            f"   {r['text'][:300]}...\n"
+            f"{i}. [{r['doc_id']}] {r['case_name'][:50]} ({r['court'][:30]}, {r['year']})"
+            f" | bm25={r['score']} | {r['text'][:120]}…\n"
         )
     return "\n".join(lines)
 

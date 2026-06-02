@@ -17,7 +17,7 @@ load_dotenv()
 
 CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 COLLECTION_NAME = "lexi_judgments"
-TOP_K = int(os.getenv("TOP_K_RETRIEVAL", "10"))
+TOP_K = int(os.getenv("TOP_K_RETRIEVAL", "5"))
 
 
 @lru_cache(maxsize=1)
