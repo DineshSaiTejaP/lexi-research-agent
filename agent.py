@@ -7,6 +7,10 @@ multiple tool calls followed by a structured Supporting / Adverse / Strategy mem
 """
 
 import os
+import re
+import time
+import logging
+
 from dotenv import load_dotenv
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
@@ -15,6 +19,7 @@ from callbacks import StepCaptureCallback
 from tools import ALL_TOOLS
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 # On Streamlit Cloud, secrets come from st.secrets rather than .env
 try:
@@ -24,6 +29,7 @@ try:
             os.environ[key] = st.secrets[key]
 except Exception:
     pass  # Running locally without Streamlit context
+
 
 SYSTEM_PROMPT = """\
 You are Lexi, an AI legal research assistant specialising in Indian court judgments.
@@ -71,10 +77,64 @@ Question: {input}
 """
 
 
+def _parse_retry_delay(error_msg: str, default: float = 10.0) -> float:
+    """
+    Extract the suggested retry delay from a rate-limit error message.
+    APIs often embed 'retry after X seconds' or 'retryDelay: Xs' in the error.
+    Falls back to the provided default if nothing is found.
+    """
+    patterns = [
+        r"retry[_ ](?:after|in|delay)[:\s]+(\d+(?:\.\d+)?)\s*s",
+        r"please retry in (\d+(?:\.\d+)?)s",
+        r"\"retryDelay\":\s*\"(\d+(?:\.\d+)?)s\"",
+        r"(\d+(?:\.\d+)?)\s*seconds",
+    ]
+    for pat in patterns:
+        m = re.search(pat, str(error_msg), re.IGNORECASE)
+        if m:
+            return min(float(m.group(1)), 60.0)  # cap at 60s
+    return default
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in ["429", "resource_exhausted", "rate limit", "too many requests", "quota", "503"])
+
+
+def _run_with_retry(executor: AgentExecutor, query: str, callbacks: list, max_retries: int = 4) -> dict:
+    """
+    Run the agent with exponential backoff on rate-limit errors.
+    Waits the server-suggested delay when available, otherwise uses
+    exponential backoff: 5s → 15s → 30s → 60s.
+    """
+    backoff = [5, 15, 30, 60]
+
+    for attempt in range(max_retries + 1):
+        try:
+            return executor.invoke({"input": query}, config={"callbacks": callbacks})
+        except Exception as exc:
+            if not _is_rate_limit(exc):
+                raise  # non-rate-limit errors propagate immediately
+
+            if attempt == max_retries:
+                raise
+
+            wait = _parse_retry_delay(str(exc), default=backoff[min(attempt, len(backoff) - 1)])
+            logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait:.0f}s...")
+
+            # Surface the wait to the Streamlit UI if available
+            try:
+                st.toast(f"⏳ Rate limit — waiting {wait:.0f}s before retry {attempt + 1}/{max_retries}...", icon="⏳")
+            except Exception:
+                pass
+
+            time.sleep(wait)
+
+
 def build_llm():
     """
-    Build the LLM based on LLM_PROVIDER env var.
-    Supported: groq (default), google, openai
+    Build the LLM client from environment config.
+    Supported providers: groq (default), google, openai
     """
     provider = os.getenv("LLM_PROVIDER", "groq").lower()
     model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
@@ -125,13 +185,19 @@ _callback = StepCaptureCallback()
 
 
 def run_agent(query: str) -> dict:
-    """Run the agent and return the answer plus all captured intermediate steps."""
+    """Run the agent with automatic rate-limit retry. Returns answer + reasoning steps."""
     _callback.reset()
     try:
-        result = build_executor().invoke(
-            {"input": query},
-            config={"callbacks": [_callback]},
-        )
+        result = _run_with_retry(build_executor(), query, callbacks=[_callback])
         return {"answer": result.get("output", ""), "steps": _callback.steps, "error": None}
-    except Exception as e:
-        return {"answer": str(e), "steps": _callback.steps, "error": str(e)}
+    except Exception as exc:
+        msg = str(exc)
+        if _is_rate_limit(exc):
+            wait = _parse_retry_delay(msg)
+            friendly = (
+                f"⏳ The LLM API is rate-limited. "
+                f"The server suggests waiting {wait:.0f}s. "
+                f"Please try again in a moment."
+            )
+            return {"answer": friendly, "steps": _callback.steps, "error": friendly}
+        return {"answer": msg, "steps": _callback.steps, "error": msg}
