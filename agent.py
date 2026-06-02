@@ -19,7 +19,7 @@ load_dotenv()
 # On Streamlit Cloud, secrets come from st.secrets rather than .env
 try:
     import streamlit as st
-    for key in ["GOOGLE_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "CHROMA_PERSIST_DIR", "TOP_K_RETRIEVAL"]:
+    for key in ["GROQ_API_KEY", "GOOGLE_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "CHROMA_PERSIST_DIR", "TOP_K_RETRIEVAL"]:
         if key in st.secrets and not os.environ.get(key):
             os.environ[key] = st.secrets[key]
 except Exception:
@@ -71,18 +71,34 @@ Question: {input}
 """
 
 
-def build_executor() -> AgentExecutor:
-    provider = os.getenv("LLM_PROVIDER", "google").lower()
-    model = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+def build_llm():
+    """
+    Build the LLM based on LLM_PROVIDER env var.
+    Supported: groq (default), google, openai
+    """
+    provider = os.getenv("LLM_PROVIDER", "groq").lower()
+    model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
-    if provider == "google":
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+        return ChatGroq(
+            model=model,
+            temperature=0.1,
+            max_tokens=4096,
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+        )
+    elif provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        llm = ChatGoogleGenerativeAI(model=model, temperature=0.1, max_tokens=4096)
+        return ChatGoogleGenerativeAI(model=model, temperature=0.1, max_tokens=4096)
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
-        llm = ChatOpenAI(model=model, temperature=0.1, max_tokens=4096)
+        return ChatOpenAI(model=model, temperature=0.1, max_tokens=4096)
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER '{provider}'. Set to 'google' or 'openai'.")
+        raise ValueError(f"Unknown LLM_PROVIDER '{provider}'. Use groq, google, or openai.")
+
+
+def build_executor() -> AgentExecutor:
+    llm = build_llm()
 
     prompt = PromptTemplate(
         template=SYSTEM_PROMPT,
