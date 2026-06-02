@@ -123,23 +123,13 @@ For **general or factual queries** (e.g. "Which judgments involve trucks?"):
 For **precedent research queries** (e.g. "Find supporting precedents for our client"):
 - Use both vector_search AND keyword_search to ensure broad coverage.
 - Run additional calls to refine if initial results are thin.
-- Always look for BOTH supporting AND adverse precedents — one-sided research is dangerous.
-- Structure your final answer as three sections:
-
-  ### Supporting Precedents
-  For each: [DOC_XXX] Case Name (Court, Year) | Legal principle | Why it helps
-
-  ### Adverse Precedents
-  For each: [DOC_XXX] Case Name (Court, Year) | Risk: HIGH/MEDIUM/LOW | How to counter
-
-  ### Strategy Recommendation
-  Priority arguments, realistic compensation range, key risks, next steps.
+- Always look for BOTH supporting AND adverse precedents.
+- IMPORTANT: To ensure accuracy and respect token limits, DO NOT generate the final memo yourself. Once you have gathered sufficient judgments (both supporting and adverse), output EXACTLY "DIVIDE_GENERATION" as your Final Answer. The system will then automatically divide the generation of the 3 sections into separate calls.
 
 ## Rules
 - Only cite documents that were actually returned by your tools. Never fabricate cases.
 - Always include [DOC_XXX] identifiers so citations can be verified.
 - If retrieval returns nothing useful, say so honestly rather than guessing.
-- Keep responses focused — you have a token budget, so be precise not verbose.
 
 ## Format
 Thought: <your reasoning>
@@ -148,7 +138,7 @@ Action Input: <input to the tool>
 Observation: <tool result>
 ... repeat as needed ...
 Thought: I have enough information to answer.
-Final Answer: <your complete response>
+Final Answer: <your complete response or "DIVIDE_GENERATION">
 
 Question: {input}
 {agent_scratchpad}\
@@ -208,12 +198,61 @@ def build_executor() -> AgentExecutor:
 _callback = StepCaptureCallback()
 
 
+def _invoke_llm_with_retry(llm, messages, max_retries=4):
+    backoff = [10, 20, 40, 60]
+    for attempt in range(max_retries + 1):
+        _throttle()
+        try:
+            return llm.invoke(messages)
+        except Exception as exc:
+            if not _is_rate_limit(exc):
+                raise
+            if attempt == max_retries:
+                raise
+            wait = _parse_retry_delay(str(exc), default=backoff[min(attempt, len(backoff) - 1)])
+            logger.warning(f"Rate limit during divide generation (attempt {attempt + 1}/{max_retries}) — waiting {wait:.0f}s")
+            try:
+                st.toast(f"⏳ Rate limit hit — waiting {wait:.0f}s then retrying ({attempt + 1}/{max_retries})…")
+            except Exception:
+                pass
+            time.sleep(wait)
+
 def run_agent(query: str) -> dict:
     """Run the agent with rate-limit retry. Returns answer + reasoning steps."""
     _callback.reset()
     try:
-        result = _run_with_retry(build_executor(), query, callbacks=[_callback])
-        return {"answer": result.get("output", ""), "steps": _callback.steps, "error": None}
+        executor = build_executor()
+        result = _run_with_retry(executor, query, callbacks=[_callback])
+        output = result.get("output", "")
+        
+        if "DIVIDE_GENERATION" in output:
+            from langchain_core.messages import HumanMessage
+            llm = build_llm()
+            
+            # Extract context from intermediate steps
+            context_blocks = []
+            for action, observation in result.get("intermediate_steps", []):
+                context_blocks.append(f"Observation from {action.tool}:\n{observation}")
+            context = "\n\n".join(context_blocks)
+            
+            # Call 1: Supporting Precedents
+            res1 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Supporting Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Legal principle | Why it helps\n\nContext:\n{context}")])
+            supp = res1.content
+            _callback.steps.append({"type": "thought", "content": "Generated Supporting Precedents section."})
+            
+            # Call 2: Adverse Precedents
+            res2 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Adverse Precedents' section for the query: '{query}'. Format:\nFor each: [DOC_XXX] Case Name (Court, Year) | Risk: HIGH/MEDIUM/LOW | How to counter\n\nContext:\n{context}")])
+            adv = res2.content
+            _callback.steps.append({"type": "thought", "content": "Generated Adverse Precedents section."})
+            
+            # Call 3: Strategy Recommendation
+            res3 = _invoke_llm_with_retry(llm, [HumanMessage(content=f"Based on the following retrieved judgments, write the '### Strategy Recommendation' section for the query: '{query}'. Format: Priority arguments, realistic compensation range, key risks, next steps.\n\nContext:\n{context}")])
+            strat = res3.content
+            _callback.steps.append({"type": "thought", "content": "Generated Strategy Recommendation section."})
+            
+            output = f"{supp}\n\n{adv}\n\n{strat}"
+
+        return {"answer": output, "steps": _callback.steps, "error": None}
     except Exception as exc:
         msg = str(exc)
         if _is_rate_limit(exc):

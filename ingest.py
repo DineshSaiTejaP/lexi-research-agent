@@ -21,11 +21,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-CORPUS_DIR = Path(os.getenv("CORPUS_DIR", "./data/judgments"))
-CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+BASE_DIR = Path(__file__).resolve().parent
+CORPUS_DIR = Path(os.getenv("CORPUS_DIR", BASE_DIR / "data" / "judgments"))
+CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "chroma_db"))
 COLLECTION = "lexi_judgments"
-CHUNK_SIZE = 2000   # characters (~500 tokens)
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 800    # characters (~200 tokens)
+CHUNK_OVERLAP = 100
 BATCH_SIZE = 64
 
 

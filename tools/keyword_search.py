@@ -52,7 +52,7 @@ def _format(results: list[dict]) -> str:
     for i, r in enumerate(results, 1):
         lines.append(
             f"{i}. [{r['doc_id']}] {r['case_name'][:50]} ({r['court'][:30]}, {r['year']})"
-            f" | bm25={r['score']} | {r['text'][:120]}…\n"
+            f" | bm25={r['score']} | {r['text']}…\n"
         )
     return "\n".join(lines)
 
