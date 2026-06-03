@@ -99,12 +99,12 @@ col_main, col_steps = st.columns([3, 2])
 with col_main:
     # ── Sample query buttons ── each click populates the text area and reruns
     SAMPLE_QUERIES = [
-        "Find precedents where an insurer was held liable despite the driver being unlicensed.",
-        "What adverse precedents exist for a policy breach due to an invalid license?",
-        "Which judgments involve Section 149 of the Motor Vehicles Act?",
-        "Which of these judgments involve commercial vehicles?",
-        "What compensation range is realistic for a 42-year-old earning ₹35,000/month?",
-        "Discuss cases involving the 'pay and recover' doctrine.",
+        "What happens to a third-party claim if the offending truck's driver lacked a valid license?",
+        "Can an insurance company escape liability if the vehicle owner knowingly hired an unlicensed driver?",
+        "Show me examples where the court applied the 'pay and recover' principle against the insurer.",
+        "How is the loss of dependency calculated for a 35-year-old victim earning ₹500,000 annually?",
+        "What is the legal precedent when a goods vehicle is involved in an accident while carrying unauthorized passengers?",
+        "Find cases discussing the apportionment of liability in instances of contributory negligence.",
     ]
 
     st.markdown("**Try a sample query:**")

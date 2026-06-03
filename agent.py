@@ -134,7 +134,7 @@ def build_llm():
 # ── Graph State ────────────────────────────────────────────────────────────────
 class AgentState(TypedDict):
     messages: Annotated[list, operator.add]
-    steps: list              # reasoning trace consumed by app.py UI
+    steps: Annotated[list, operator.add]  # reasoning trace consumed by app.py UI
     error: str | None
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
@@ -181,14 +181,17 @@ def agent_node(state: AgentState) -> dict:
     llm_with_tools = llm.bind_tools(tools)
     
     sys_msg = SystemMessage(content="""You are Lexi, an AI legal research assistant specializing in Indian court judgments.
+You MUST ALWAYS use the provided search tools to find relevant documents BEFORE answering any query. DO NOT answer from your internal knowledge and DO NOT hallucinate case citations.
+
 You must handle user queries flexibly and naturally:
-- If the user asks a simple or general lookup question (e.g. "Which cases involve commercial vehicles?"), use search_cases and answer directly.
-- If the user asks for deep legal research, asks you to "discuss" legal doctrines, or asks for precedents, you must dynamically research both sides. Use search_cases for supporting precedents, and ALWAYS use search_adverse_cases to check for opposing precedents. Then output your final answer formatted strictly with three sections:
+- For simple or general lookup questions (e.g. "Which cases involve commercial vehicles?"), use `search_cases` and answer directly based ONLY on the retrieved documents.
+- For deep legal research, discussing doctrines, or finding precedents, you must dynamically research both sides. Use `search_cases` for supporting precedents, and ALWAYS use `search_adverse_cases` to check for opposing precedents.
+- After successfully retrieving documents from the tools, output your final answer formatted strictly with three sections:
   ### Supporting Precedents
   ### Adverse Precedents
   ### Strategy Recommendation
 
-Always cite documents exactly as [DOC_XXX].
+Always cite retrieved documents exactly as [DOC_XXX].
 IMPORTANT: When invoking tools, output ONLY the tool call and NO other text or explanation.""")
     
     try:
