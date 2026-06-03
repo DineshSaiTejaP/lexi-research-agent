@@ -90,6 +90,8 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "query_input" not in st.session_state:
     st.session_state.query_input = ""
+if "last_query_time" not in st.session_state:
+    st.session_state.last_query_time = 0.0
 
 col_main, col_steps = st.columns([3, 2])
 
@@ -133,88 +135,96 @@ with col_steps:
     trace_slot.info("Run a query to see how the agent reasons step by step.")
 
 # ── Run agent ──────────────────────────────────────────────────────────────────
+COOL_OFF_PERIOD = 20.0
+
 if go and query.strip():
-    logger.info(f"[QUERY START] {query.strip()[:120]}")
-    t0 = time.time()
-
-    with col_main:
-        with st.spinner("Researching the corpus…"):
-            result = run_agent(query.strip())
-
-    elapsed = round(time.time() - t0, 1)
-    n_steps  = len(result["steps"])
-    n_tools  = sum(1 for s in result["steps"] if s.get("type") == "tool_call")
-    docs_set = {
-        w for s in result["steps"]
-        for w in str(s.get("content", "")).split()
-        if w.startswith("DOC_")
-    }
-
-    if result["error"]:
-        logger.error(f"[QUERY ERROR] {result['error'][:200]}")
+    elapsed_since_last = time.time() - st.session_state.last_query_time
+    if elapsed_since_last < COOL_OFF_PERIOD:
+        with col_main:
+            st.warning(f"⏳ Cooling down to prevent API rate limits. Please wait {int(COOL_OFF_PERIOD - elapsed_since_last)} seconds before your next query.")
     else:
-        logger.info(
-            f"[QUERY DONE] elapsed={elapsed}s steps={n_steps} "
-            f"tool_calls={n_tools} docs_seen={len(docs_set)}"
-        )
-
-    st.session_state.history.append(result | {"query": query.strip(), "elapsed": elapsed})
-
-    # ── Render reasoning trace ──
-    with col_steps:
-        trace_slot.empty()
-        steps = result["steps"]
-        st.markdown(f"**{len(steps)} steps · {elapsed}s**")
-        for i, step in enumerate(steps, 1):
-            t = step.get("type", "")
-            if t == "thought":
-                with st.expander(f"💭 Thought {i}", expanded=False):
-                    st.markdown(
-                        f'<div class="step-thought">{step["content"]}</div>',
-                        unsafe_allow_html=True,
-                    )
-            elif t == "tool_call":
-                with st.expander(f"🔧 {step['tool_name']}", expanded=True):
-                    st.markdown(
-                        f'<div class="step-tool">'
-                        f'<div class="tool-name">🔧 {step["tool_name"]}</div>'
-                        f'<div class="tool-input">{step["content"]}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-            elif t == "tool_result":
-                with st.expander(f"📄 Result from {step.get('tool_name', 'tool')}", expanded=True):
-                    st.markdown(
-                        f'<div class="step-result">{step["content"]}</div>',
-                        unsafe_allow_html=True,
-                    )
-            elif t == "retrieval_summary":
-                with st.expander("📊 Retrieval Summary", expanded=True):
-                    st.markdown(
-                        f'<div class="step-thought">{step["content"]}</div>', # Reuse thought style
-                        unsafe_allow_html=True,
-                    )
-            elif t == "error":
-                st.markdown(
-                    f'<div class="step-error">⚠️ {step["content"]}</div>',
-                    unsafe_allow_html=True,
-                )
-
-    # ── Render answer ──
-    with col_main:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Tool Calls", n_tools)
-        m2.metric("Docs Referenced", len(docs_set))
-        m3.metric("Total Steps", n_steps)
-
-        st.markdown("### Research Findings")
+        st.session_state.last_query_time = time.time()
+        logger.info(f"[QUERY START] {query.strip()[:120]}")
+        t0 = time.time()
+    
+        with col_main:
+            with st.spinner("Researching the corpus…"):
+                result = run_agent(query.strip())
+    
+        elapsed = round(time.time() - t0, 1)
+        n_steps  = len(result["steps"])
+        n_tools  = sum(1 for s in result["steps"] if s.get("type") == "tool_call")
+        docs_set = {
+            w for s in result["steps"]
+            for w in str(s.get("content", "")).split()
+            if w.startswith("DOC_")
+        }
+    
         if result["error"]:
-            st.error(result["error"])
+            logger.error(f"[QUERY ERROR] {result['error'][:200]}")
         else:
-            # Use st.markdown inside a styled container so ### headers render
-            st.markdown('<div class="answer-wrap">', unsafe_allow_html=True)
-            st.markdown(result["answer"])
-            st.markdown('</div>', unsafe_allow_html=True)
+            logger.info(
+                f"[QUERY DONE] elapsed={elapsed}s steps={n_steps} "
+                f"tool_calls={n_tools} docs_seen={len(docs_set)}"
+            )
+    
+        st.session_state.history.append(result | {"query": query.strip(), "elapsed": elapsed})
+    
+        # ── Render reasoning trace ──
+        with col_steps:
+            trace_slot.empty()
+            steps = result["steps"]
+            st.markdown(f"**{len(steps)} steps · {elapsed}s**")
+            for i, step in enumerate(steps, 1):
+                t = step.get("type", "")
+                if t == "thought":
+                    with st.expander(f"💭 Thought {i}", expanded=False):
+                        st.markdown(
+                            f'<div class="step-thought">{step["content"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+                elif t == "tool_call":
+                    with st.expander(f"🔧 {step['tool_name']}", expanded=True):
+                        st.markdown(
+                            f'<div class="step-tool">'
+                            f'<div class="tool-name">🔧 {step["tool_name"]}</div>'
+                            f'<div class="tool-input">{step["content"]}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                elif t == "tool_result":
+                    with st.expander(f"📄 Result from {step.get('tool_name', 'tool')}", expanded=True):
+                        st.markdown(
+                            f'<div class="step-result">{step["content"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+                elif t == "retrieval_summary":
+                    with st.expander("📊 Retrieval Summary", expanded=True):
+                        st.markdown(
+                            f'<div class="step-thought">{step["content"]}</div>', # Reuse thought style
+                            unsafe_allow_html=True,
+                        )
+                elif t == "error":
+                    st.markdown(
+                        f'<div class="step-error">⚠️ {step["content"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+    
+        # ── Render answer ──
+        with col_main:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Tool Calls", n_tools)
+            m2.metric("Docs Referenced", len(docs_set))
+            m3.metric("Total Steps", n_steps)
+    
+            st.markdown("### Research Findings")
+            if result["error"]:
+                st.error(result["error"])
+            else:
+                # Use st.markdown inside a styled container so ### headers render
+                st.markdown('<div class="answer-wrap">', unsafe_allow_html=True)
+                st.markdown(result["answer"])
+                st.markdown('</div>', unsafe_allow_html=True)
 
 elif go:
     with col_main:
