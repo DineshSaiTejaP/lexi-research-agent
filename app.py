@@ -64,7 +64,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .step-tool    { background: rgba(99,102,241,0.06); border: 1px solid rgba(99,102,241,0.2); border-radius: 7px; padding: 10px 14px; margin: 6px 0; }
 .step-tool .tool-name { color: #818cf8; font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.5px; }
 .step-tool .tool-input { color: #cbd5e1; font-size: 0.83rem; margin-top: 3px; }
-.step-result  { background: rgba(16,185,129,0.05); border: 1px solid rgba(16,185,129,0.18); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #6ee7b7; font-size: 0.8rem; max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+.step-result  { background: rgba(16,185,129,0.05); border: 1px solid rgba(16,185,129,0.18); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #6ee7b7; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
 .step-error   { background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.2); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #fca5a5; font-size: 0.83rem; }
 
 .answer-wrap {
@@ -185,16 +185,26 @@ if go and query.strip():
                             unsafe_allow_html=True,
                         )
                 elif t == "tool_call":
-                    with st.expander(f"🔧 {step['tool_name']}", expanded=True):
+                    name_map = {
+                        "search_cases": "Search Court Judgments",
+                        "search_adverse_cases": "Search Adverse Precedents"
+                    }
+                    friendly_name = name_map.get(step['tool_name'], step['tool_name'])
+                    with st.expander(f"🔍 Executing: {friendly_name}", expanded=True):
                         st.markdown(
                             f'<div class="step-tool">'
-                            f'<div class="tool-name">🔧 {step["tool_name"]}</div>'
-                            f'<div class="tool-input">{step["content"]}</div>'
+                            f'<div class="tool-name">Task: {friendly_name}</div>'
+                            f'<div class="tool-input">Query: {step["content"]}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
                 elif t == "tool_result":
-                    with st.expander(f"📄 Result from {step.get('tool_name', 'tool')}", expanded=True):
+                    name_map = {
+                        "search_cases": "Court Judgments",
+                        "search_adverse_cases": "Adverse Precedents"
+                    }
+                    friendly_name = name_map.get(step.get('tool_name', 'tool'), step.get('tool_name', 'tool'))
+                    with st.expander(f"📄 Results: {friendly_name}", expanded=True):
                         st.markdown(
                             f'<div class="step-result">{step["content"]}</div>',
                             unsafe_allow_html=True,

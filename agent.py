@@ -116,7 +116,7 @@ def _invoke_with_retry(llm, messages, max_retries: int = 4):
 def build_llm():
     provider = os.getenv("LLM_PROVIDER", "groq").lower()
     model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-    max_tokens = int(os.getenv("LLM_MAX_TOKENS", "1500"))
+    max_tokens = int(os.getenv("LLM_MAX_TOKENS", "4000"))
 
     if provider == "groq":
         from langchain_groq import ChatGroq
@@ -237,7 +237,7 @@ def tools_node(state: AgentState) -> dict:
         if tool_fn:
             result = tool_fn.invoke(tc["args"])
             tool_msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-            steps.append({"type": "tool_result", "tool_name": tc["name"], "content": result[:500] + "..."})
+            steps.append({"type": "tool_result", "tool_name": tc["name"], "content": result})
             
     return {"messages": tool_msgs, "steps": steps}
 
