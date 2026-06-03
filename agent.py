@@ -88,16 +88,25 @@ def _invoke_with_retry(llm, messages, max_retries: int = 4):
         try:
             return llm.invoke(messages)
         except Exception as exc:
-            if not _is_rate_limit(exc):
+            msg = str(exc).lower()
+            is_tool_err = "tool_use_failed" in msg or "failed to call a function" in msg
+            
+            if not _is_rate_limit(exc) and not is_tool_err:
                 raise
             if attempt == max_retries:
                 raise
-            wait = _parse_retry_delay(str(exc), default=backoff[min(attempt, len(backoff) - 1)])
-            logger.warning(f"Rate limit (attempt {attempt+1}/{max_retries}) — waiting {wait:.0f}s")
+            
+            if is_tool_err:
+                wait = 2.0
+                logger.warning(f"Tool format error (attempt {attempt+1}/{max_retries}) — retrying in {wait}s")
+            else:
+                wait = _parse_retry_delay(str(exc), default=backoff[min(attempt, len(backoff) - 1)])
+                logger.warning(f"Rate limit (attempt {attempt+1}/{max_retries}) — waiting {wait:.0f}s")
+                
             try:
                 if _in_streamlit():
                     import streamlit as st
-                    st.toast(f"⏳ Rate limit — retrying in {wait:.0f}s ({attempt+1}/{max_retries})…")
+                    st.toast(f"⏳ API retry — waiting {wait:.0f}s ({attempt+1}/{max_retries})…")
             except Exception:
                 pass
             time.sleep(wait)
@@ -179,7 +188,8 @@ You must handle user queries flexibly and naturally:
   ### Adverse Precedents
   ### Strategy Recommendation
 
-Always cite documents exactly as [DOC_XXX].""")
+Always cite documents exactly as [DOC_XXX].
+IMPORTANT: When invoking tools, output ONLY the tool call and NO other text or explanation.""")
     
     try:
         response = _invoke_with_retry(llm_with_tools, [sys_msg] + state["messages"])
