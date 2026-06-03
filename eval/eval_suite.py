@@ -38,19 +38,48 @@ with open(GOLD_SET_PATH) as f:
 
 EVAL_QUERIES = GOLD_SET["eval_queries"]
 
+# ─── LLM-as-Judge Helper ──────────────────────────────────────────────────────
+def _call_llm_judge(prompt: str) -> str:
+    """Helper to call the configured LLM for judge tasks with retry logic."""
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+    LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+    
+    for attempt in range(5):
+        try:
+            if LLM_PROVIDER == "groq":
+                from langchain_groq import ChatGroq
+                from langchain_core.messages import HumanMessage
+                llm = ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=512)
+                return llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            elif LLM_PROVIDER == "google":
+                import google.generativeai as genai
+                genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+                model = genai.GenerativeModel(LLM_MODEL)
+                return model.generate_content(prompt).text.strip()
+            elif LLM_PROVIDER == "openai":
+                from openai import OpenAI
+                client = OpenAI()
+                response = client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                )
+                return response.choices[0].message.content.strip()
+            else:
+                raise ValueError(f"Unknown provider: {LLM_PROVIDER}")
+        except Exception as e:
+            if attempt == 4:
+                print(f"\n[Warning] LLM Judge failed after 5 attempts: {e}")
+                return "{}"
+            time.sleep(10 * (attempt + 1))
 
 # ─── Dimension 1: Precision ───────────────────────────────────────────────────
-def eval_precision(answer: str, steps: list[dict], query_type: str, expected_themes: list[str]) -> dict:
+def eval_precision(query: str, answer: str, expected_themes: list[str]) -> dict:
     """
     Measures: Of the document citations in the answer, what % align with expected themes?
-    
-    Method: 
-    - Extract DOC_XXX references from the answer
-    - Check if the surrounding context mentions any expected theme
-    - Score = (contextually relevant citations) / (total citations)
+    Method: LLM-as-judge replaces exact string matching to prevent false 0.0 scores.
     """
-    # Extract all DOC citations from answer
-    cited_docs = re.findall(r"DOC_\d+", answer)
+    cited_docs = list(set(re.findall(r"DOC_\d+", answer)))
     if not cited_docs:
         return {
             "score": 0.0,
@@ -60,28 +89,41 @@ def eval_precision(answer: str, steps: list[dict], query_type: str, expected_the
             "note": "No documents cited in answer"
         }
 
-    # Check each citation's surrounding context for theme alignment
-    relevant = 0
-    for doc_id in set(cited_docs):
-        # Find the context around this citation
-        pattern = rf".{{0,200}}{re.escape(doc_id)}.{{0,200}}"
-        matches = re.findall(pattern, answer, re.DOTALL)
-        context = " ".join(matches).lower()
+    judge_prompt = f"""You are evaluating an AI legal research agent's precision.
 
-        # Check if any expected theme appears in context
-        for theme in expected_themes:
-            if theme.lower() in context:
-                relevant += 1
-                break
+QUERY: {query}
+EXPECTED THEMES: {', '.join(expected_themes)}
 
-    total = len(set(cited_docs))
-    score = relevant / total if total > 0 else 0.0
+AGENT RESPONSE:
+{answer[:3000]}
+
+Evaluate the cited documents: {', '.join(cited_docs)}
+Are they contextually relevant to the query and expected themes?
+
+Respond ONLY with a JSON object in this exact format:
+{{"relevant_docs": ["DOC_XXX", "DOC_YYY"], "explanation": "Brief reason"}}"""
+
+    raw = _call_llm_judge(judge_prompt)
+    
+    relevant_docs = []
+    json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group())
+            relevant_docs = [d for d in parsed.get("relevant_docs", []) if d in cited_docs]
+        except Exception:
+            pass
+
+    relevant_count = len(relevant_docs)
+    total_count = len(cited_docs)
+    score = relevant_count / total_count if total_count > 0 else 0.0
 
     return {
         "score": round(score, 3),
-        "cited_docs": list(set(cited_docs)),
-        "relevant_count": relevant,
-        "total_count": total,
+        "cited_docs": cited_docs,
+        "relevant_count": relevant_count,
+        "total_count": total_count,
+        "relevant_docs": relevant_docs
     }
 
 
@@ -155,9 +197,6 @@ def eval_reasoning_quality(query: str, answer: str) -> dict:
     
     Returns scores 1-5 for each dimension.
     """
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
-    LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-
     judge_prompt = f"""You are evaluating an AI legal research agent's response quality.
 
 QUERY: {query}
@@ -183,29 +222,7 @@ Respond ONLY with a JSON object like this:
 {{"faithfulness": 4, "legal_coherence": 3, "citation_quality": 5, "overall_comment": "Brief explanation"}}"""
 
     try:
-        if LLM_PROVIDER == "groq":
-            from langchain_groq import ChatGroq
-            from langchain_core.messages import HumanMessage
-            llm = ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=512)
-            response = llm.invoke([HumanMessage(content=judge_prompt)])
-            raw = response.content.strip()
-        elif LLM_PROVIDER == "google":
-            import google.generativeai as genai
-            genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-            model = genai.GenerativeModel(LLM_MODEL)
-            response = model.generate_content(judge_prompt)
-            raw = response.text.strip()
-        elif LLM_PROVIDER == "openai":
-            from openai import OpenAI
-            client = OpenAI()
-            response = client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[{"role": "user", "content": judge_prompt}],
-                temperature=0,
-            )
-            raw = response.choices[0].message.content.strip()
-        else:
-            return {"error": f"Unknown provider: {LLM_PROVIDER}"}
+        raw = _call_llm_judge(judge_prompt)
 
         # Extract JSON from response
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -298,7 +315,7 @@ def run_evaluation():
         print(f"  [OK] Agent responded in {elapsed:.1f}s")
 
         # Evaluate all 4 dimensions
-        precision = eval_precision(answer, steps, query_type, expected_themes)
+        precision = eval_precision(query, answer, expected_themes)
         recall = eval_recall(answer, steps)
         reasoning = eval_reasoning_quality(query, answer)
         adverse = eval_adverse_identification(answer) if query_type == "deep_research" else None
@@ -325,8 +342,9 @@ def run_evaluation():
         if adverse:
             print(f"  Adverse ID Score: {adverse['score']:.3f}")
 
-        # Rate limit pause
-        time.sleep(2)
+        if i < len(EVAL_QUERIES):
+            print("  ⏳ Waiting 120s (2 mins) to respect API rate limits...")
+            time.sleep(120)
 
     # Compute aggregate scores
     precision_avg = sum(r["precision"]["score"] for r in all_results) / len(all_results)

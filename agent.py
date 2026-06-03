@@ -37,13 +37,22 @@ from tools.keyword_search import keyword_search
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# ── Helper: Check if running inside Streamlit ──────────────────────────────────
+def _in_streamlit() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
 # ── Streamlit secret injection ─────────────────────────────────────────────────
 try:
-    import streamlit as st
-    for key in ["GROQ_API_KEY", "GOOGLE_API_KEY", "LLM_PROVIDER", "LLM_MODEL",
-                "CHROMA_PERSIST_DIR", "TOP_K_RETRIEVAL"]:
-        if key in st.secrets and not os.environ.get(key):
-            os.environ[key] = str(st.secrets[key])
+    if _in_streamlit():
+        import streamlit as st
+        for key in ["GROQ_API_KEY", "GOOGLE_API_KEY", "LLM_PROVIDER", "LLM_MODEL",
+                    "CHROMA_PERSIST_DIR", "TOP_K_RETRIEVAL"]:
+            if key in st.secrets and not os.environ.get(key):
+                os.environ[key] = str(st.secrets[key])
 except Exception:
     pass
 
@@ -96,7 +105,9 @@ def _invoke_with_retry(llm, messages, max_retries: int = 4):
             wait = _parse_retry_delay(str(exc), default=backoff[min(attempt, len(backoff) - 1)])
             logger.warning(f"Rate limit (attempt {attempt+1}/{max_retries}) — waiting {wait:.0f}s")
             try:
-                st.toast(f"⏳ Rate limit — retrying in {wait:.0f}s ({attempt+1}/{max_retries})…")
+                if _in_streamlit():
+                    import streamlit as st
+                    st.toast(f"⏳ Rate limit — retrying in {wait:.0f}s ({attempt+1}/{max_retries})…")
             except Exception:
                 pass
             time.sleep(wait)

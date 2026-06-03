@@ -128,8 +128,7 @@ Results are saved to:
 - `eval/eval_raw_results.json` — raw scores for all queries
 
 **Note:** The reasoning quality dimension uses an LLM-as-judge call. Set `LLM_PROVIDER` and the corresponding API key in your `.env` before running.
-
-**To enable exact recall scoring**, update `eval/gold_set.json` with manually labelled relevant document IDs after reviewing the corpus.
+**Exact recall scoring is enabled**, as `eval/gold_set.json` contains manually labelled relevant document IDs after reviewing the corpus.
 
 ---
 
@@ -190,10 +189,10 @@ See [eval/results_report.md](./eval/results_report.md) for full per-query breakd
 
 | Dimension | Score |
 |-----------|-------|
-| Precision | 0.850 |
-| Reasoning Quality | 4.20 / 5 |
-| Adverse ID | 0.875 |
-| Recall (Coverage Proxy) | 0.900 |
+| Precision | 0.598 |
+| Reasoning Quality | 4.27 / 5 |
+| Adverse ID | 0.917 |
+| Recall | 0.12 |
 
 ---
 
@@ -212,4 +211,3 @@ CHROMA_PERSIST_DIR = "./chroma_db"
 TOP_K_RETRIEVAL = "10"
 ```
 4. Deploy — the app will be live at a `*.streamlit.app` URL
-

@@ -128,7 +128,6 @@ If the corpus grew from 50 to 5,000 documents, I would change:
 
 3. **Citation extraction + PDF deep-link**: Post-process the agent's answer to extract all `[DOC_XXX]` citations and render them as clickable links that open the original PDF at the relevant page.
 
-4. **Evaluation with human labels**: Manually review the 50 judgments to populate `eval/gold_set.json` with ground-truth relevant document IDs (5–10 supporting, 3–5 adverse for the Lakshmi Devi case). This would replace the coverage proxy with exact precision/recall scores.
+4. **Expand Evaluation Gold Set**: While `eval/gold_set.json` has been initially populated with ground-truth labels for precision/recall, we can expand it to cover more queries and edge cases to further refine our exact evaluation scores.
 
 5. **Conversation memory**: Add LangGraph's `MemorySaver` checkpointer to allow follow-up queries ("Now find the compensation range from those cases"). Currently each query is stateless.
-
