@@ -155,8 +155,8 @@ def eval_reasoning_quality(query: str, answer: str) -> dict:
     
     Returns scores 1-5 for each dimension.
     """
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google").lower()
-    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+    LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
     judge_prompt = f"""You are evaluating an AI legal research agent's response quality.
 
@@ -183,7 +183,13 @@ Respond ONLY with a JSON object like this:
 {{"faithfulness": 4, "legal_coherence": 3, "citation_quality": 5, "overall_comment": "Brief explanation"}}"""
 
     try:
-        if LLM_PROVIDER == "google":
+        if LLM_PROVIDER == "groq":
+            from langchain_groq import ChatGroq
+            from langchain_core.messages import HumanMessage
+            llm = ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=512)
+            response = llm.invoke([HumanMessage(content=judge_prompt)])
+            raw = response.content.strip()
+        elif LLM_PROVIDER == "google":
             import google.generativeai as genai
             genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
             model = genai.GenerativeModel(LLM_MODEL)

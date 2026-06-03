@@ -3,6 +3,14 @@ __pycache__/
 .env
 *.egg-info/
 .DS_Store
+
+# Corpus PDFs are large — not committed, must be added locally before running ingest.py
 data/judgments/*.pdf
+# Keep the directory itself so ingest.py doesn't fail on a fresh clone
+!data/judgments/.gitkeep
+
+# Raw eval output regenerated each run
 eval/eval_raw_results.json
-# chroma_db/ is intentionally committed for Streamlit Cloud deployment
+
+# chroma_db/ is intentionally committed — it is the pre-built vector store
+# used by the Streamlit Cloud deployment (no ingest step needed at runtime)

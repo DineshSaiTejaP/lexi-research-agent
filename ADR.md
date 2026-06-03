@@ -1,25 +1,37 @@
 # Architecture Decision Record (ADR)
 ## Lexi Legal Precedent Research Agent
-
+Link:- https://lexi-research-agent-assessment-dinesh.streamlit.app/#reference-case-brief
 ---
 
-## 1. Architecture Choice: ReAct Agent
+## 1. Architecture Choice: LangGraph State Machine
 
 ### Decision
-I built the agent using the **ReAct (Reason + Act)** pattern via LangChain's `create_react_agent`, rather than a fixed pipeline or graph-based workflow.
+I built the agent using **LangGraph** with explicit nodes and edges, rather than a fixed pipeline or a pure ReAct loop.
+
+### Graph Topology
+```
+START → [router] → [retriever] → (conditional edge)
+                                    ├── [general_answerer] → END
+                                    └── [supporting_analyzer]
+                                              ↓
+                                       [adverse_analyzer]
+                                              ↓
+                                    [strategy_synthesizer] → END
+```
 
 ### Rationale
-The assessment explicitly required that the agent "dynamically determine its own workflow rather than following hard-coded steps." ReAct satisfies this naturally:
+The assessment required the agent to "dynamically determine its own workflow rather than following hard-coded steps." LangGraph satisfies this with LLM-driven routing:
 
-- The LLM decides, at runtime, whether a query needs 1 tool call or 6
-- It can self-correct if initial retrieval returns poor results
-- It handles the full spectrum from "Which cases involve trucks?" (1 tool call) to "Find precedents supporting our client's insurance claim" (4-6 tool calls with synthesis)
+- The `router` node makes a single LLM call to classify the query as `general` or `deep_research`. No hardcoded keywords — the LLM reasons about intent.
+- The conditional edge after `retriever` branches based on that classification. Simple queries get one LLM call; research queries get four.
+- Each node is a pure function over `AgentState` — easy to test, extend, and reason about independently.
+- The `adverse_analyzer` is a **dedicated node**, not a prompt instruction. This guarantees adverse precedents are always generated for deep research queries, regardless of how many supporting cases were retrieved.
 
 ### Alternatives Considered
 | Option | Why Rejected |
 |--------|-------------|
 | Fixed pipeline (retrieve → rank → synthesize) | Violates the "no hard-coded steps" requirement; brittle for diverse queries |
-| LangGraph state machine | More complex than needed for 50 docs; harder to explain without domain-specific justification |
+| ReAct (single LLM loop with tools) | Less predictable — the LLM can decide to skip adverse analysis; harder to guarantee all three output sections are generated |
 | CrewAI / AutoGen | Explicitly prohibited by the assessment |
 | Simple RAG (no agent) | Cannot handle multi-step research, cannot distinguish query types |
 
@@ -32,46 +44,48 @@ The assessment explicitly required that the agent "dynamically determine its own
 1. Dense vector search (sentence-transformers `all-MiniLM-L6-v2` + ChromaDB)
 2. Sparse keyword search (BM25 via `rank_bm25`)
 
+For deep research queries, a **third adversarial retrieval pass** runs automatically with an insurer-favouring query, ensuring adverse precedents are retrieved even when the user's query is claimant-focused.
+
 ### Rationale
 
 **Why both?** Legal documents contain a mix of semantic concepts and exact statutory references. Vector search excels at semantic similarity ("cases about insurance liability") but can miss exact phrases ("Section 149 of the Motor Vehicles Act"). BM25 catches the exact terminology that practitioners know to look for.
 
-**Why RRF for merging?** Reciprocal Rank Fusion is a well-established technique (Cormack et al., 2009) that merges ranked lists without requiring score normalization. It outperforms simple score-based merging for heterogeneous retrieval systems and requires no additional API calls or models.
+**Why RRF for merging?** Reciprocal Rank Fusion (Cormack et al., 2009) merges ranked lists without requiring score normalisation. It outperforms simple score-based merging for heterogeneous retrieval systems and requires no additional API calls or models.
 
-**Why `all-MiniLM-L6-v2`?** Free, runs locally, 384-dimensional embeddings, achieves strong performance on semantic textual similarity benchmarks. The alternative (OpenAI `text-embedding-3-small`) would add cost and an API dependency for a 50-doc corpus where latency isn't critical.
+**Why `all-MiniLM-L6-v2`?** Free, runs locally, 384-dimensional embeddings, strong performance on semantic textual similarity benchmarks. The alternative (OpenAI `text-embedding-3-small`) would add cost and an API dependency for a 50-doc corpus where latency is not critical.
 
-**Why ChromaDB?** Zero infrastructure overhead — runs in-process, persists to disk, supports metadata filtering, and handles 50 documents trivially. The hosted vector store (Qdrant Cloud, Pinecone) would be overkill for this scale.
+**Why ChromaDB?** Zero infrastructure overhead — runs in-process, persists to disk, supports metadata filtering, and handles 50 documents trivially. Hosted vector stores (Qdrant Cloud, Pinecone) would be overkill at this scale.
 
 ---
 
 ## 3. Chunking Approach
 
 ### Decision
-**Recursive character text splitter:** ~500 token chunks (≈2000 chars) with 50-token (≈200 char) overlap, using paragraph/sentence boundaries as preferred split points.
+**Recursive character text splitter:** ~170 token chunks (≈800 chars) with ~25-token (≈100 char) overlap, using paragraph/sentence boundaries as preferred split points.
 
 ### Rationale
-Indian court judgments follow a predictable structure: facts → issues → arguments → holding → order. Chunks of 500 tokens capture one logical section (e.g., a factual finding or a legal holding) without splitting mid-argument. The 50-token overlap prevents reasoning at chunk boundaries from being lost.
+Indian court judgments follow a predictable structure: facts → issues → arguments → holding → order. Chunks of ~800 characters capture one logical section (e.g., a factual finding or a legal holding) without splitting mid-argument. The 100-character overlap prevents reasoning at chunk boundaries from being lost.
 
-**Why not semantic chunking?** True semantic chunking (embedding-based) would be superior but requires an LLM call per document at ingestion time, adding cost and latency. For 50 documents, the quality gain doesn't justify the tradeoff.
+**Why not semantic chunking?** True semantic chunking (embedding-based) would be superior but requires an LLM call per document at ingestion time, adding cost and latency. For 50 documents, the quality gain does not justify the tradeoff.
 
-**What I extract per chunk:** `doc_id`, `page_number`, `court`, `year`, `case_name`, `topics` (via regex), `is_motor_accident` (boolean). This metadata powers the third tool (`metadata_filter`) and appears in search results.
+**What I extract per chunk:** `doc_id`, `court`, `year`, `case_name`, `topics` (via regex), `is_motor_accident` (boolean). This metadata powers the `metadata_filter` tool and appears in search results for citation verification.
 
 ---
 
 ## 4. How the Agent Decides Query Complexity
 
 ### Decision
-The **system prompt** instructs the LLM to distinguish query types, not code-level branching:
+The `router` node makes an **LLM call** to classify the query. The result is stored in `AgentState.query_type` and read by the `route_after_retrieval` conditional edge function. No keyword matching, no if/else branching in application code.
 
-```
-For simple factual queries → use 1-2 tool calls, direct answer
-For deep precedent research → use vector + keyword search, surface both 
-                              supporting AND adverse precedents, synthesize
-                              into three-section research memo
+```python
+def route_after_retrieval(state: AgentState) -> str:
+    return "general_answerer" if state["query_type"] == "general" else "supporting_analyzer"
 ```
 
 ### Rationale
-Any code-level if-else classification would need to enumerate query types — fragile and hard to maintain. The LLM's own judgment is more robust. The system prompt provides examples and structures the output format, giving the agent enough context to self-classify without external logic.
+Any code-level classification would need to enumerate query patterns — fragile and hard to maintain. Delegating to the LLM is more robust. The router prompt is deliberately minimal: it asks for one word (`general` or `deep_research`) and relies on the LLM's own understanding of legal research intent.
+
+**Failure mode considered:** If the router misclassifies a general query as `deep_research`, the agent over-delivers (three sections instead of one). If it misclassifies a research query as `general`, it under-delivers. The code defaults to `deep_research` on any router error — always over-delivering is safer in a legal research context.
 
 ---
 
@@ -80,10 +94,11 @@ Any code-level if-else classification would need to enumerate query types — fr
 | Tradeoff | Choice | Reason |
 |----------|--------|--------|
 | Embedding cost vs. quality | Local sentence-transformers | Free, no API dependency |
-| Retrieval depth | Top-10 per method → merge | Balances context window usage vs. coverage |
-| Metadata extraction | Regex-based | Fast, no LLM calls needed for 50 docs |
+| Retrieval depth | Top-8 per method | Balances context window usage vs. coverage |
+| Metadata extraction | Regex-based | Fast; no LLM calls needed for 50 docs |
 | Agent memory | Stateless per request | Simplifies Streamlit deployment; history shown in UI |
-| Reranking | RRF (no neural reranker) | Free; Cohere reranker would improve precision at cost |
+| Reranking | RRF only (no neural reranker) | Free; Cohere reranker would improve precision at cost |
+| Adverse detection | Dedicated `adverse_analyzer` node + separate retrieval pass | Guarantees adverse section is always generated |
 
 ---
 
@@ -93,32 +108,27 @@ If the corpus grew from 50 to 5,000 documents, I would change:
 
 1. **Vector store → Qdrant Cloud or Pinecone**: ChromaDB is not designed for millions of vectors. These hosted solutions support hybrid search natively, horizontal scaling, and production SLAs.
 
-2. **Embeddings → OpenAI `text-embedding-3-small` or Cohere Embed**: Higher-dimensional, better legal domain performance. The API cost is justified at scale (~$0.02/1000 pages).
+2. **Embeddings → OpenAI `text-embedding-3-small` or Cohere Embed**: Higher-dimensional embeddings with better legal domain performance. The API cost (~$0.02/1000 pages) is justified at scale.
 
-3. **Metadata extraction → LLM-assisted**: At 5,000 docs, regex-based extraction will miss too many cases. Use a fast LLM call on the first page of each document to extract structured metadata (case name, court, parties, citations, legal issues).
+3. **Metadata extraction → LLM-assisted**: At 5,000 docs, regex-based extraction misses too many cases. Use a fast LLM call on the first page of each document to extract structured metadata (case name, court, parties, cited statutes, legal issues).
 
-4. **Ingestion → async pipeline**: Add a queue (Celery + Redis) for async ingestion. New documents added via API without blocking the app.
+4. **Ingestion → async pipeline**: Add a queue (Celery + Redis) for async ingestion so new documents can be added via API without blocking the app.
 
-5. **Add a neural reranker**: After initial retrieval, use Cohere Rerank or a cross-encoder to rerank the top-50 results to top-10. This significantly improves precision.
+5. **Add a neural reranker**: After initial retrieval, use Cohere Rerank or a cross-encoder to rerank the top-50 results to top-10. This significantly improves precision on large corpora.
 
-6. **Chunking → hierarchical**: Add a document-level summary embedding alongside chunk-level embeddings. This enables "retrieve document, then retrieve relevant chunks within it" — better for long judgments.
+6. **Chunking → hierarchical**: Add a document-level summary embedding alongside chunk-level embeddings. This enables "retrieve document, then retrieve relevant chunks within it" — better for long judgments where the key holding is far from the relevant facts.
 
 ---
 
 ## 7. What I Would Change With Another Week
 
-1. **Streaming responses**: Stream the LLM output token-by-token to Streamlit using `StreamingStdOutCallbackHandler`, so users see the answer being written rather than waiting 20-30 seconds.
+1. **Streaming responses**: Stream the LLM output token-by-token to Streamlit so users see the answer being written rather than waiting 20–30 seconds for the full memo.
 
-2. **Citation extraction**: Post-process the agent's answer to extract all DOC_XXX citations and display them as a clickable reference panel with the relevant excerpt highlighted.
+2. **Query expansion node**: Add a pre-retrieval LangGraph node that uses the LLM to generate 3–4 synonymous search queries (e.g., expanding "commercial vehicle" to include "truck, lorry, transport vehicle, goods vehicle"). Run all of them, merge via RRF. This would significantly improve BM25 recall.
 
-3. **Query expansion**: Before retrieval, ask the LLM to generate 3 related search queries from the user's input, run all of them, and merge results. This improves recall significantly.
+3. **Citation extraction + PDF deep-link**: Post-process the agent's answer to extract all `[DOC_XXX]` citations and render them as clickable links that open the original PDF at the relevant page.
 
-4. **Evaluation with human labels**: Manually review the 50 judgments to create a proper gold set for the Lakshmi Devi case (5-10 supporting, 3-5 adverse). This would enable exact precision/recall scores instead of proxies.
+4. **Evaluation with human labels**: Manually review the 50 judgments to populate `eval/gold_set.json` with ground-truth relevant document IDs (5–10 supporting, 3–5 adverse for the Lakshmi Devi case). This would replace the coverage proxy with exact precision/recall scores.
 
-5. **Conversation memory**: Add LangChain's `ConversationBufferMemory` to allow follow-up queries like "Now find the compensation range from those cases." Currently each query is stateless.
+5. **Conversation memory**: Add LangGraph's `MemorySaver` checkpointer to allow follow-up queries ("Now find the compensation range from those cases"). Currently each query is stateless.
 
-6. **Better adverse detection**: Add a dedicated "adversarial search" step that specifically prompts the agent to search for cases where claimants lost, rather than relying on the general prompt to surface them.
-
----
-
-*This ADR covers the key architectural decisions for the Lexi research agent. Prepared for the Lexi Backend Engineer take-home assessment, 2026.*

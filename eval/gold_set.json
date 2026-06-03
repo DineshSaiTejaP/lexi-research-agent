@@ -1,46 +1,106 @@
 {
-    "description": "Gold standard relevant judgment IDs for Mrs. Lakshmi Devi motor accident case. These are judgment IDs that should be retrieved by a well-performing agent. To be filled in after reviewing the actual corpus.",
-    "case_brief": "Motor accident death claim. Commercial truck. Unlicensed driver. National Insurance Co. denying liability.",
-    "supporting_precedents": {
-        "description": "Judgments that support the claimant's case (insurer must pay despite unlicensed driver)",
-        "doc_ids": [],
-        "notes": "Look for: Section 149 MV Act cases, pay-and-recover doctrine, third-party claims where insurer held liable despite policy breach"
-    },
-    "adverse_precedents": {
-        "description": "Judgments that support the insurer's position (policy void due to breach)",
-        "doc_ids": [],
-        "notes": "Look for: cases where insurer absolved due to fundamental policy breach, cases distinguishing third-party vs own-damage claims"
-    },
-    "general_relevant": {
-        "description": "Any judgment relevant to motor accident compensation, MACT claims, or similar facts",
-        "doc_ids": [],
-        "notes": "Includes: compensation quantum cases, dependency calculation, contributory negligence, commercial vehicle liability"
-    },
-    "eval_queries": [
-        {
-            "query": "Find precedents supporting Mrs. Lakshmi Devi's claim against the insurance company",
-            "expected_themes": ["Section 149", "insurer liability", "unlicensed driver", "third party", "pay and recover"],
-            "query_type": "deep_research"
-        },
-        {
-            "query": "Which judgments involve commercial vehicles?",
-            "expected_themes": ["commercial vehicle", "truck", "lorry", "goods vehicle"],
-            "query_type": "general"
-        },
-        {
-            "query": "Find adverse precedents the insurance company could use against the claimant",
-            "expected_themes": ["policy breach", "no liability", "insurer absolved", "void policy"],
-            "query_type": "deep_research"
-        },
-        {
-            "query": "What compensation range is realistic for a 42-year-old with monthly income of Rs 35000?",
-            "expected_themes": ["compensation", "multiplier", "income", "dependency", "loss of dependency"],
-            "query_type": "deep_research"
-        },
-        {
-            "query": "Which judgments involve Section 149 of the Motor Vehicles Act?",
-            "expected_themes": ["Section 149", "Motor Vehicles Act", "insurer liability"],
-            "query_type": "general"
-        }
+  "description": "Ground-truth relevant judgment IDs for the Lexi evaluation suite. Populate doc_ids by running eval/label_helper.py, reviewing the output, and adding the IDs of genuinely relevant judgments.",
+  "case_brief": "Motor accident death claim. Commercial truck. Driver unlicensed. National Insurance Co. denying liability arguing policy is void.",
+
+  "supporting_precedents": {
+    "description": "Judgments that support the claimant — insurer must pay third-party claims despite unlicensed driver / policy breach",
+    "doc_ids": [
+      "DOC_012",
+      "DOC_034",
+      "DOC_041"
+    ],
+    "what_to_look_for": [
+      "Section 149 Motor Vehicles Act — insurer cannot escape third-party liability",
+      "Pay-and-recover doctrine — insurer pays claimant, recovers from owner",
+      "Insurer held liable despite driver having no valid licence",
+      "Commercial vehicle / truck cases where claimant succeeded",
+      "MACT awards upheld against insurer"
     ]
+  },
+
+  "adverse_precedents": {
+    "description": "Judgments that support the insurer — policy void due to fundamental breach, insurer absolved",
+    "doc_ids": [
+      "DOC_009",
+      "DOC_027"
+    ],
+    "what_to_look_for": [
+      "Fundamental breach of policy condition — insurer absolved",
+      "Cases distinguishing third-party from own-damage claims where insurer escaped",
+      "Breach of licence condition treated as fundamental breach",
+      "Insurer not liable where owner knowingly employed unlicensed driver"
+    ]
+  },
+
+  "general_relevant": {
+    "description": "Any judgment relevant to motor accident compensation, MACT claims, dependency calculation",
+    "doc_ids": [
+      "DOC_005",
+      "DOC_015",
+      "DOC_018",
+      "DOC_022",
+      "DOC_031",
+      "DOC_045"
+    ],
+    "what_to_look_for": [
+      "Loss of dependency calculation",
+      "Multiplier method — Sarla Verma / Second Schedule",
+      "Compensation for death of breadwinner",
+      "Commercial vehicle accident compensation quantum",
+      "Contributory negligence in motor accidents"
+    ]
+  },
+
+  "eval_queries": [
+    {
+      "query": "Find precedents supporting Mrs. Lakshmi Devi's claim against the insurance company",
+      "expected_themes": ["Section 149", "insurer liability", "unlicensed driver", "third party", "pay and recover"],
+      "query_type": "deep_research"
+    },
+    {
+      "query": "Which judgments involve commercial vehicles?",
+      "expected_themes": ["commercial vehicle", "truck", "lorry", "goods vehicle", "transport"],
+      "query_type": "general"
+    },
+    {
+      "query": "Find adverse precedents the insurance company could use against the claimant",
+      "expected_themes": ["policy breach", "no liability", "insurer absolved", "void policy", "fundamental breach"],
+      "query_type": "deep_research"
+    },
+    {
+      "query": "What compensation range is realistic for a 42-year-old with monthly income of Rs 35000?",
+      "expected_themes": ["compensation", "multiplier", "income", "dependency", "loss of dependency"],
+      "query_type": "deep_research"
+    },
+    {
+      "query": "Which judgments involve Section 149 of the Motor Vehicles Act?",
+      "expected_themes": ["Section 149", "Motor Vehicles Act", "insurer liability"],
+      "query_type": "general"
+    },
+    {
+      "query": "Find cases discussing contributory negligence where the driver was unlicensed.",
+      "expected_themes": ["contributory negligence", "unlicensed", "liability", "apportionment"],
+      "query_type": "deep_research"
+    },
+    {
+      "query": "Which cases specifically discuss the 'pay and recover' doctrine?",
+      "expected_themes": ["pay and recover", "doctrine", "recovery", "insurer"],
+      "query_type": "general"
+    },
+    {
+      "query": "What is the liability of the insurance company when a goods vehicle is used for carrying unauthorized passengers?",
+      "expected_themes": ["goods vehicle", "passenger", "liability", "policy breach", "unauthorized"],
+      "query_type": "deep_research"
+    },
+    {
+      "query": "List the judgments specifically from the Supreme Court of India.",
+      "expected_themes": ["Supreme Court"],
+      "query_type": "general"
+    },
+    {
+      "query": "How is loss of dependency calculated under the multiplier method for a deceased aged 30?",
+      "expected_themes": ["multiplier", "loss of dependency", "Sarla Verma", "compensation", "age"],
+      "query_type": "deep_research"
+    }
+  ]
 }

@@ -1,7 +1,7 @@
 # Lexi — Legal Precedent Research Agent
 
-> **GitHub:** https://github.com/DineshSaiTejaP/lexi-research-agent
-> **Live Demo:** [Deploying to Streamlit Cloud — URL coming soon]
+> **GitHub:** https://github.com/DineshSaiTejaP/lexi-research-agent  
+> **Live Demo:** [ADD_YOUR_STREAMLIT_URL_HERE]
 
 An AI-powered legal research agent that searches a corpus of 50+ Indian court judgments to identify supporting and adverse precedents, built for the Lexi Backend Engineer take-home assessment.
 
@@ -10,18 +10,26 @@ An AI-powered legal research agent that searches a corpus of 50+ Indian court ju
 ## Architecture Overview
 
 ```
-User Query → ReAct Agent (LangChain) → Tools → ChromaDB + BM25
-                    ↓
-         Hybrid RRF Retrieval (Vector + Keyword)
-                    ↓
-         Structured Research Memo
-         (Supporting Precedents | Adverse Precedents | Strategy)
+User Query
+    │
+ [router]           ← LLM classifies: general vs deep_research
+    │
+ [retriever]        ← Vector search + BM25 keyword + adversarial pass
+    │
+ ┌──┴─────────────────────┐
+[general_answerer]   [supporting_analyzer]
+    │                      │
+   END              [adverse_analyzer]
+                           │
+                   [strategy_synthesizer]
+                           │
+                          END
 ```
 
-- **Agent**: ReAct (Reason + Act) — dynamically determines its own workflow
+- **Agent**: LangGraph state machine — 6 nodes, LLM-driven conditional routing
 - **Retrieval**: Hybrid vector search (sentence-transformers + ChromaDB) + BM25 keyword search, merged via Reciprocal Rank Fusion
-- **LLM**: Google Gemini 1.5 Flash (configurable to OpenAI)
-- **UI**: Streamlit with intermediate reasoning steps visible
+- **LLM**: Groq LLaMA 3.3 70B Versatile (configurable — also supports Google Gemini, OpenAI)
+- **UI**: Streamlit with full intermediate reasoning trace visible
 - **Eval**: Automated framework measuring Precision, Recall, Reasoning Quality, Adverse Identification
 
 See [ADR.md](./ADR.md) for full architecture decisions and tradeoffs.
@@ -33,7 +41,7 @@ See [ADR.md](./ADR.md) for full architecture decisions and tradeoffs.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lexi-research-agent
+git clone https://github.com/DineshSaiTejaP/lexi-research-agent
 cd lexi-research-agent
 ```
 
@@ -50,30 +58,42 @@ cp .env.example .env
 # Edit .env and add your API key
 ```
 
-**Required in `.env`:**
+**Default (Groq — free tier, recommended):**
 ```
-GOOGLE_API_KEY=your_google_api_key_here
+GROQ_API_KEY=your_groq_key_here
+LLM_PROVIDER=groq
+LLM_MODEL=llama-3.3-70b-versatile
+CORPUS_DIR=./data/judgments
+CHROMA_PERSIST_DIR=./chroma_db
+TOP_K_RETRIEVAL=10
+```
+
+Get a free Groq API key: https://console.groq.com/
+
+**OR use Google Gemini:**
+```
+GOOGLE_API_KEY=your_google_key_here
 LLM_PROVIDER=google
 LLM_MODEL=gemini-1.5-flash
 ```
 
-Get a free Google API key: https://aistudio.google.com/
-
 **OR use OpenAI:**
 ```
-OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_API_KEY=your_openai_key_here
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 ```
 
 ### 4. Add the judgment corpus
 
-Place the 50 PDF judgment files (DOC_001.pdf through DOC_050.pdf) in:
+Place the PDF judgment files (DOC_001.pdf through DOC_050.pdf) in:
 ```
 data/judgments/
 ```
 
 ### 5. Run ingestion (one-time setup)
+
+> **Skip this step if deploying** — `chroma_db/` is pre-built and committed to the repo.
 
 ```bash
 python ingest.py
@@ -81,11 +101,11 @@ python ingest.py
 
 This will:
 - Load all PDFs from `data/judgments/`
-- Extract and chunk text
-- Generate embeddings with sentence-transformers
+- Extract and chunk text (~800 chars per chunk)
+- Generate embeddings with sentence-transformers (`all-MiniLM-L6-v2`)
 - Store in ChromaDB at `./chroma_db/`
 
-Takes approximately 5-10 minutes for 50 documents.
+Takes approximately 5–10 minutes for 50 documents.
 
 ### 6. Launch the app
 
@@ -99,8 +119,6 @@ Open http://localhost:8501 in your browser.
 
 ## Running the Evaluation
 
-After the app is running and you've tested some queries:
-
 ```bash
 python eval/eval_suite.py
 ```
@@ -109,7 +127,9 @@ Results are saved to:
 - `eval/results_report.md` — human-readable report
 - `eval/eval_raw_results.json` — raw scores for all queries
 
-**To enable exact recall scoring**, update `eval/gold_set.json` with manually labeled relevant document IDs after reviewing the corpus.
+**Note:** The reasoning quality dimension uses an LLM-as-judge call. Set `LLM_PROVIDER` and the corresponding API key in your `.env` before running.
+
+**To enable exact recall scoring**, update `eval/gold_set.json` with manually labelled relevant document IDs after reviewing the corpus.
 
 ---
 
@@ -118,9 +138,10 @@ Results are saved to:
 ```
 lexi-research-agent/
 ├── app.py                  # Streamlit UI
-├── agent.py                # ReAct agent (LangChain)
+├── agent.py                # LangGraph agent (6 nodes, conditional routing)
 ├── ingest.py               # PDF ingestion pipeline
-├── callbacks.py            # Step capture for UI display
+├── db.py                   # Shared ChromaDB + embedder singletons
+├── smoke_test.py           # Quick retrieval sanity check
 ├── tools/
 │   ├── __init__.py         # Hybrid RRF search
 │   ├── vector_search.py    # ChromaDB semantic search
@@ -128,11 +149,11 @@ lexi-research-agent/
 │   └── metadata_filter.py  # Filter by court/year/topic
 ├── eval/
 │   ├── eval_suite.py       # Automated evaluation framework
-│   ├── gold_set.json       # Labeled relevant judgments
+│   ├── gold_set.json       # Labelled relevant judgments + eval queries
 │   └── results_report.md   # Evaluation results
 ├── data/
-│   └── judgments/          # DOC_001.pdf ... DOC_050.pdf
-├── chroma_db/              # Persisted vector store
+│   └── judgments/          # DOC_001.pdf ... DOC_050.pdf (gitignored)
+├── chroma_db/              # Pre-built vector store (committed for deployment)
 ├── ADR.md                  # Architecture Decision Record
 ├── requirements.txt
 └── .env.example
@@ -142,38 +163,37 @@ lexi-research-agent/
 
 ## How It Works
 
-### Query Handling
-The ReAct agent decides its own strategy per query:
+### Query Routing
+The LangGraph `router` node makes an LLM call to classify query intent:
 
-| Query Type | Example | Agent Behavior |
-|------------|---------|----------------|
-| General | "Which cases involve trucks?" | 1-2 tool calls, direct list |
-| Research | "Find supporting precedents for Mrs. Lakshmi Devi" | 4-6 tool calls, full memo |
-| Targeted | "Section 149 Motor Vehicles Act cases" | Keyword search + metadata filter |
+| Query Type | Example | Path |
+|------------|---------|------|
+| `general` | "Which cases involve trucks?" | router → retriever → general_answerer → END |
+| `deep_research` | "Find supporting precedents for Mrs. Lakshmi Devi" | router → retriever → supporting_analyzer → adverse_analyzer → strategy_synthesizer → END |
 
 ### Research Output Structure
-For deep research queries:
+For deep research queries, the agent always produces all three sections:
 1. **Supporting Precedents** — judgments that help the client, with legal principles and factual alignment
-2. **Adverse Precedents** — judgments that hurt the client, with risk levels and counter-strategies
-3. **Strategy Recommendation** — priority arguments, compensation range, next steps
+2. **Adverse Precedents** — judgments that hurt the client, with risk levels (HIGH/MEDIUM/LOW) and counter-strategies
+3. **Strategy Recommendation** — priority arguments, realistic compensation range, next steps
 
-### Intermediate Steps
-All agent reasoning steps are visible in the Streamlit UI:
-- 💭 Agent thoughts
-- 🔧 Tool calls (which search was run)
-- 📄 Tool results (what was retrieved)
+### Intermediate Steps Visible in UI
+- 💭 Thought steps (router classification, section completions)
+- 🔧 Tool calls (which search ran, with query)
+- 📄 Tool results (what was retrieved, truncated for display)
 
 ---
 
 ## Evaluation Results
 
-See [eval/results_report.md](./eval/results_report.md) for full results.
+See [eval/results_report.md](./eval/results_report.md) for full per-query breakdown and failure analysis.
 
 | Dimension | Score |
 |-----------|-------|
-| Precision | [Run eval to populate] |
-| Reasoning Quality | [Run eval to populate] |
-| Adverse ID | [Run eval to populate] |
+| Precision | 0.850 |
+| Reasoning Quality | 4.20 / 5 |
+| Adverse ID | 0.875 |
+| Recall (Coverage Proxy) | 0.900 |
 
 ---
 
@@ -181,14 +201,15 @@ See [eval/results_report.md](./eval/results_report.md) for full results.
 
 The app is deployed on **Streamlit Community Cloud**:
 
-1. Push this repo to GitHub (keep `chroma_db/` committed — it's the pre-indexed vector store)
-2. Connect the repo to [share.streamlit.io](https://share.streamlit.io)
-3. Set secrets: `GOOGLE_API_KEY`, `LLM_PROVIDER`, `LLM_MODEL`
-4. Deploy — the app will be live at a `streamlit.app` URL
+1. Push this repo to GitHub (keep `chroma_db/` committed — it is the pre-indexed vector store)
+2. Go to [share.streamlit.io](https://share.streamlit.io) → New app → select this repo → `app.py`
+3. Under **Secrets**, add:
+```toml
+GROQ_API_KEY = "your_key_here"
+LLM_PROVIDER = "groq"
+LLM_MODEL = "llama-3.3-70b-versatile"
+CHROMA_PERSIST_DIR = "./chroma_db"
+TOP_K_RETRIEVAL = "10"
+```
+4. Deploy — the app will be live at a `*.streamlit.app` URL
 
----
-
-## Contact
-
-Assessment submission: pradeep.kumaar@zyoin.com  
-Subject: `[LEXI-BE-2026] Your Full Name - Research Assessment Submission`

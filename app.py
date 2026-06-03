@@ -3,8 +3,18 @@ Lexi — Legal Precedent Research Agent
 Streamlit UI
 """
 
+import logging
+import time
 import streamlit as st
 from agent import run_agent
+
+# ── Logging — all output captured by Streamlit Cloud logs ─────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger("lexi.app")
 
 st.set_page_config(
     page_title="Lexi — Legal Research Agent",
@@ -53,35 +63,37 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .step-tool    { background: rgba(99,102,241,0.06); border: 1px solid rgba(99,102,241,0.2); border-radius: 7px; padding: 10px 14px; margin: 6px 0; }
 .step-tool .tool-name { color: #818cf8; font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.5px; }
 .step-tool .tool-input { color: #cbd5e1; font-size: 0.83rem; margin-top: 3px; }
-.step-result  { background: rgba(16,185,129,0.05); border: 1px solid rgba(16,185,129,0.18); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #6ee7b7; font-size: 0.8rem; max-height: 180px; overflow-y: auto; }
+.step-result  { background: rgba(16,185,129,0.05); border: 1px solid rgba(16,185,129,0.18); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #6ee7b7; font-size: 0.8rem; max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
 .step-error   { background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.2); border-radius: 7px; padding: 10px 14px; margin: 6px 0; color: #fca5a5; font-size: 0.83rem; }
 
-.answer-box {
+.answer-wrap {
     background: #0f1117;
     border: 1px solid rgba(99,102,241,0.18);
     border-radius: 14px;
     padding: 24px 28px;
     margin-top: 14px;
-    color: #e2e8f0;
-    line-height: 1.7;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="header">
   <div class="badge">⚖️ LEGAL RESEARCH AI</div>
   <h1>Lexi — Precedent Research Agent</h1>
-  <p>56 Indian court judgments · ReAct agent · Hybrid vector + BM25 retrieval · Full reasoning trace</p>
+  <p>50+ Indian court judgments · LangGraph agent · Hybrid vector + BM25 retrieval · Full reasoning trace</p>
 </div>
 """, unsafe_allow_html=True)
 
+# ── Session state init ─────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []
+if "query_input" not in st.session_state:
+    st.session_state.query_input = ""
 
 col_main, col_steps = st.columns([3, 2])
 
+# ── Left column ────────────────────────────────────────────────────────────────
 with col_main:
     st.markdown("""
     <div class="brief">
@@ -95,7 +107,8 @@ with col_main:
     </div>
     """, unsafe_allow_html=True)
 
-    sample_queries = [
+    # ── Sample query buttons ── each click populates the text area and reruns
+    SAMPLE_QUERIES = [
         "Find precedents supporting Mrs. Lakshmi Devi's claim against the insurance company.",
         "What adverse precedents could National Insurance use, and how do we counter them?",
         "Which judgments involve Section 149 of the Motor Vehicles Act?",
@@ -106,44 +119,72 @@ with col_main:
 
     st.markdown("**Try a sample query:**")
     c1, c2 = st.columns(2)
-    for i, q in enumerate(sample_queries):
-        btn_label = q[:58] + "…" if len(q) > 60 else q
-        if (c1 if i % 2 == 0 else c2).button(btn_label, key=f"s{i}", use_container_width=True):
-            st.session_state["queued"] = q
+    for i, q in enumerate(SAMPLE_QUERIES):
+        label = q[:58] + "…" if len(q) > 60 else q
+        if (c1 if i % 2 == 0 else c2).button(label, key=f"sq_{i}", use_container_width=True):
+            # Set session state THEN rerun so text_area picks up the new value
+            st.session_state.query_input = q
+            logger.info(f"Sample query selected: {q[:60]}")
+            st.rerun()
 
     st.divider()
 
+    # ── Text area — driven by session state so buttons reliably populate it ──
     query = st.text_area(
         "Your research query:",
-        value=st.session_state.pop("queued", ""),
+        key="query_input",
         height=90,
         placeholder="Ask anything about the corpus…",
     )
     go = st.button("🔍 Research", type="primary", use_container_width=True)
 
+# ── Right column placeholder ───────────────────────────────────────────────────
 with col_steps:
     st.markdown("### 🧠 Reasoning Trace")
     trace_slot = st.empty()
     trace_slot.info("Run a query to see how the agent reasons step by step.")
 
-# ── Run ───────────────────────────────────────────────────────────────────────
+# ── Run agent ──────────────────────────────────────────────────────────────────
 if go and query.strip():
+    logger.info(f"[QUERY START] {query.strip()[:120]}")
+    t0 = time.time()
+
     with col_main:
         with st.spinner("Researching the corpus…"):
             result = run_agent(query.strip())
 
-    st.session_state.history.append(result | {"query": query.strip()})
+    elapsed = round(time.time() - t0, 1)
+    n_steps  = len(result["steps"])
+    n_tools  = sum(1 for s in result["steps"] if s.get("type") == "tool_call")
+    docs_set = {
+        w for s in result["steps"]
+        for w in str(s.get("content", "")).split()
+        if w.startswith("DOC_")
+    }
 
-    # Render reasoning trace
+    if result["error"]:
+        logger.error(f"[QUERY ERROR] {result['error'][:200]}")
+    else:
+        logger.info(
+            f"[QUERY DONE] elapsed={elapsed}s steps={n_steps} "
+            f"tool_calls={n_tools} docs_seen={len(docs_set)}"
+        )
+
+    st.session_state.history.append(result | {"query": query.strip(), "elapsed": elapsed})
+
+    # ── Render reasoning trace ──
     with col_steps:
         trace_slot.empty()
         steps = result["steps"]
-        st.markdown(f"**{len(steps)} steps captured**")
+        st.markdown(f"**{len(steps)} steps · {elapsed}s**")
         for i, step in enumerate(steps, 1):
             t = step.get("type", "")
             if t == "thought":
                 with st.expander(f"💭 Thought {i}", expanded=False):
-                    st.markdown(f'<div class="step-thought">{step["content"]}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="step-thought">{step["content"]}</div>',
+                        unsafe_allow_html=True,
+                    )
             elif t == "tool_call":
                 with st.expander(f"🔧 {step['tool_name']}", expanded=True):
                     st.markdown(
@@ -155,36 +196,43 @@ if go and query.strip():
                     )
             elif t == "tool_result":
                 with st.expander(f"📄 Result {i}", expanded=False):
-                    st.markdown(f'<div class="step-result">{step["content"]}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="step-result">{step["content"]}</div>',
+                        unsafe_allow_html=True,
+                    )
             elif t == "error":
-                st.markdown(f'<div class="step-error">⚠️ {step["content"]}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="step-error">⚠️ {step["content"]}</div>',
+                    unsafe_allow_html=True,
+                )
 
-    # Render answer
+    # ── Render answer ──
     with col_main:
-        tool_calls = sum(1 for s in result["steps"] if s.get("type") == "tool_call")
-        docs_cited = len({w for s in result["steps"] for w in str(s.get("content", "")).split() if w.startswith("DOC_")})
-
         m1, m2, m3 = st.columns(3)
-        m1.metric("Tool Calls", tool_calls)
-        m2.metric("Docs Referenced", docs_cited)
-        m3.metric("Total Steps", len(result["steps"]))
+        m1.metric("Tool Calls", n_tools)
+        m2.metric("Docs Referenced", len(docs_set))
+        m3.metric("Total Steps", n_steps)
 
         st.markdown("### Research Findings")
         if result["error"]:
             st.error(result["error"])
         else:
-            st.markdown(f'<div class="answer-box">{result["answer"]}</div>', unsafe_allow_html=True)
+            # Use st.markdown inside a styled container so ### headers render
+            st.markdown('<div class="answer-wrap">', unsafe_allow_html=True)
+            st.markdown(result["answer"])
+            st.markdown('</div>', unsafe_allow_html=True)
 
 elif go:
     with col_main:
         st.warning("Please enter a query.")
 
-# ── History ───────────────────────────────────────────────────────────────────
+# ── Query history ──────────────────────────────────────────────────────────────
 past = st.session_state.history[:-1] if st.session_state.history else []
 if past:
     with col_main:
         st.divider()
         st.markdown("### Query History")
         for item in reversed(past):
-            with st.expander(item["query"][:80]):
+            label = f"{item['query'][:70]}  ·  {item.get('elapsed', '?')}s"
+            with st.expander(label):
                 st.markdown(item["answer"])
