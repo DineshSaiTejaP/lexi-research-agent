@@ -5,6 +5,7 @@ Streamlit UI
 
 import logging
 import time
+import re
 import streamlit as st
 from agent import run_agent
 
@@ -154,11 +155,11 @@ if go and query.strip():
         elapsed = round(time.time() - t0, 1)
         n_steps  = len(result["steps"])
         n_tools  = sum(1 for s in result["steps"] if s.get("type") == "tool_call")
-        docs_set = {
-            w for s in result["steps"]
-            for w in str(s.get("content", "")).split()
-            if w.startswith("DOC_")
-        }
+        
+        docs_raw = re.findall(r"DOC_\d+", result.get("answer", ""))
+        for s in result["steps"]:
+            docs_raw.extend(re.findall(r"DOC_\d+", str(s.get("content", ""))))
+        docs_set = set(docs_raw)
     
         if result["error"]:
             logger.error(f"[QUERY ERROR] {result['error'][:200]}")
