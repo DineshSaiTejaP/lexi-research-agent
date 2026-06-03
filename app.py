@@ -95,26 +95,14 @@ col_main, col_steps = st.columns([3, 2])
 
 # ── Left column ────────────────────────────────────────────────────────────────
 with col_main:
-    st.markdown("""
-    <div class="brief">
-      <h4>📋 Reference Case Brief</h4>
-      <p>
-        <strong style="color:#e2e8f0">Client:</strong> Mrs. Lakshmi Devi — motor accident death claim<br>
-        <strong style="color:#e2e8f0">Facts:</strong> Husband killed by commercial truck; driver had no valid licence.
-        National Insurance Co. is denying the claim, arguing the policy is void due to the unlicensed driver.<br>
-        <strong style="color:#e2e8f0">Profile:</strong> Deceased age 42, ₹35,000/month income, wife + 2 minor children (ages 8 & 12)
-      </p>
-    </div>
-    """, unsafe_allow_html=True)
-
     # ── Sample query buttons ── each click populates the text area and reruns
     SAMPLE_QUERIES = [
-        "Find precedents supporting Mrs. Lakshmi Devi's claim against the insurance company.",
-        "What adverse precedents could National Insurance use, and how do we counter them?",
+        "Find precedents where an insurer was held liable despite the driver being unlicensed.",
+        "What adverse precedents exist for a policy breach due to an invalid license?",
         "Which judgments involve Section 149 of the Motor Vehicles Act?",
         "Which of these judgments involve commercial vehicles?",
         "What compensation range is realistic for a 42-year-old earning ₹35,000/month?",
-        "Find cases where an insurer was held liable despite the driver being unlicensed.",
+        "Discuss cases involving the 'pay and recover' doctrine.",
     ]
 
     st.markdown("**Try a sample query:**")
