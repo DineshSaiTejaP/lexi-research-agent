@@ -195,9 +195,15 @@ if go and query.strip():
                         unsafe_allow_html=True,
                     )
             elif t == "tool_result":
-                with st.expander(f"📄 Result {i}", expanded=False):
+                with st.expander(f"📄 Result from {step.get('tool_name', 'tool')}", expanded=True):
                     st.markdown(
                         f'<div class="step-result">{step["content"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+            elif t == "retrieval_summary":
+                with st.expander("📊 Retrieval Summary", expanded=True):
+                    st.markdown(
+                        f'<div class="step-thought">{step["content"]}</div>', # Reuse thought style
                         unsafe_allow_html=True,
                     )
             elif t == "error":

@@ -188,18 +188,20 @@ def retriever_node(state: AgentState) -> AgentState:
     try:
         vec_results = vector_search(query, top_k=top_k)
         vec_text = _format_hits(vec_results, "vector")
+        steps.append({"type": "tool_result", "tool_name": "vector_search", "content": vec_text[:1500]})
     except Exception as exc:
         vec_text = f"Vector search error: {exc}"
-    steps.append({"type": "tool_result", "content": vec_text[:1500]})
+        steps.append({"type": "error", "content": vec_text})
 
     # ── Keyword (BM25) search ──
     steps.append({"type": "tool_call", "tool_name": "keyword_search", "content": query})
     try:
         kw_results = keyword_search(query, top_k=top_k)
         kw_text = _format_hits(kw_results, "keyword")
+        steps.append({"type": "tool_result", "tool_name": "keyword_search", "content": kw_text[:1500]})
     except Exception as exc:
         kw_text = f"Keyword search error: {exc}"
-    steps.append({"type": "tool_result", "content": kw_text[:1500]})
+        steps.append({"type": "error", "content": kw_text})
 
     # ── Adversarial pass (deep_research only) ──
     adv_text = ""
@@ -213,9 +215,19 @@ def retriever_node(state: AgentState) -> AgentState:
         try:
             adv_results = keyword_search(adv_query, top_k=5)
             adv_text = _format_hits(adv_results, "adversarial-keyword")
+            steps.append({"type": "tool_result", "tool_name": "keyword_search (adversarial pass)", "content": adv_text[:1000]})
         except Exception as exc:
             adv_text = ""
-        steps.append({"type": "tool_result", "content": adv_text[:1000]})
+            steps.append({"type": "error", "content": f"Adversarial search error: {exc}"})
+
+    # --- Summary of retrieved docs ---
+    all_retrieved_ids = []
+    if 'vec_results' in locals() and vec_results: all_retrieved_ids.extend([r['doc_id'] for r in vec_results])
+    if 'kw_results' in locals() and kw_results: all_retrieved_ids.extend([r['doc_id'] for r in kw_results])
+    if 'adv_results' in locals() and adv_results: all_retrieved_ids.extend([r['doc_id'] for r in adv_results])
+    unique_docs = list(dict.fromkeys(all_retrieved_ids))
+    summary_content = f"Retrieved {len(unique_docs)} unique documents: {', '.join(unique_docs)}"
+    steps.append({"type": "retrieval_summary", "content": summary_content})
 
     retrieved = f"{vec_text}\n\n{kw_text}"
     if adv_text:
@@ -229,8 +241,9 @@ def _format_hits(results: list, source: str) -> str:
         return f"No results from {source} search."
     lines = [f"Results from {source} search ({len(results)} hits):\n"]
     for i, r in enumerate(results, 1):
+        score_info = f"Score: {r.get('score', 0.0):.3f}"
         lines.append(
-            f"{i}. [{r['doc_id']}] {r.get('case_name','')[:55]} "
+            f"{i}. [{r['doc_id']}] ({score_info}) {r.get('case_name','')[:55]} "
             f"({r.get('court','')[:30]}, {r.get('year','')}) | "
             f"{r.get('text','')[:300]}…"
         )
