@@ -266,7 +266,7 @@ Answer the following query using ONLY the retrieved documents below.
 Query: {state['query']}
 
 Retrieved Documents:
-{state['retrieved_docs'][:4000]}
+{state['retrieved_docs'][:8000]}
 
 Rules:
 - Cite documents as [DOC_XXX]
@@ -300,7 +300,7 @@ def supporting_analyzer_node(state: AgentState) -> AgentState:
 Research Query: {state['query']}
 
 Retrieved Judgments:
-{state['retrieved_docs'][:4000]}
+{state['retrieved_docs'][:8000]}
 
 Write the Supporting Precedents section. For each supporting judgment include:
 - Citation: [DOC_XXX] Case Name (Court, Year)
@@ -338,7 +338,7 @@ def adverse_analyzer_node(state: AgentState) -> AgentState:
 Research Query: {state['query']}
 
 Retrieved Judgments (including adversarial pass results):
-{state['retrieved_docs'][:4000]}
+{state['retrieved_docs'][:8000]}
 
 Write the Adverse Precedents section. A well-prepared legal team must know both sides.
 For each adverse judgment include:
