@@ -1,6 +1,6 @@
 # Architecture Decision Record (ADR)
 ## Lexi Legal Precedent Research Agent
-Link:- https://lexi-research-agent-assessment-dinesh.streamlit.app/#reference-case-brief
+**Live Demo:** https://lexi-research-agent-assessment-dinesh.streamlit.app/
 ---
 
 ## 1. Architecture Choice: LangGraph State Machine
