@@ -135,13 +135,13 @@ with col_steps:
     trace_slot.info("Run a query to see how the agent reasons step by step.")
 
 # ── Run agent ──────────────────────────────────────────────────────────────────
-COOL_OFF_PERIOD = 20.0
+COOL_OFF_PERIOD = 60.0
 
 if go and query.strip():
     elapsed_since_last = time.time() - st.session_state.last_query_time
     if elapsed_since_last < COOL_OFF_PERIOD:
         with col_main:
-            st.warning(f"⏳ Cooling down to prevent API rate limits. Please wait {int(COOL_OFF_PERIOD - elapsed_since_last)} seconds before your next query.")
+            st.warning(f"⏳ Cooling off the agent(Rate limit error). Please wait {int(COOL_OFF_PERIOD - elapsed_since_last)} seconds.")
     else:
         st.session_state.last_query_time = time.time()
         logger.info(f"[QUERY START] {query.strip()[:120]}")
