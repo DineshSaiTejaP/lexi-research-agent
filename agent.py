@@ -2,34 +2,24 @@
 LangGraph legal precedent research agent.
 
 Graph topology:
-    START
-      │
-   [router]            ← LLM classifies query: "general" or "deep_research"
-      │
-   [retriever]         ← Always runs vector + keyword + adversarial pass
-      │
-    ┌─┴──────────────────┐
-[general_answerer]  [supporting_analyzer]
-      │                   │
-     END           [adverse_analyzer]
-                          │
-                  [strategy_synthesizer]
-                          │
-                         END
+    START → [agent] ⟷ [tools] → END
 
-Routing is LLM-driven — no hardcoded keyword matching.
-Simple queries (1 LLM call + retrieval) vs deep research (4 LLM calls + retrieval).
+Uses a ReAct (Tool-Calling) architecture to handle varying complexities 
+naturally without any if-else branching or hard-coded routing paths. The LLM 
+dynamically calls tools and formats responses based on the query context.
 """
 
 import os
 import re
 import time
 import logging
-from typing import TypedDict, Literal
+import operator
+from typing import TypedDict, Annotated
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 
 from tools.vector_search import vector_search
 from tools.keyword_search import keyword_search
@@ -134,334 +124,112 @@ def build_llm():
 
 # ── Graph State ────────────────────────────────────────────────────────────────
 class AgentState(TypedDict):
-    query: str
-    query_type: str          # "general" | "deep_research"
-    retrieved_docs: str      # formatted retrieval output passed to all LLM nodes
-    supporting_section: str
-    adverse_section: str
-    strategy_section: str
-    final_answer: str
+    messages: Annotated[list, operator.add]
     steps: list              # reasoning trace consumed by app.py UI
     error: str | None
 
-
-# ── Node 1: router ─────────────────────────────────────────────────────────────
-def router_node(state: AgentState) -> AgentState:
-    """
-    LLM classifies the query as 'general' or 'deep_research'.
-    This drives the conditional edge after retrieval — no hardcoded keywords.
-    """
-    query = state["query"]
-    steps = list(state.get("steps", []))
-
-    steps.append({"type": "thought", "content": f"Classifying query intent: '{query[:80]}'"})
-
-    llm = build_llm()
-    prompt = f"""You are a legal research assistant. Classify the user query below.
-
-Query: {query}
-
-Respond with EXACTLY one word:
-- "deep_research" — if the query asks for precedent research, case analysis, 
-  legal strategy, supporting/adverse cases, compensation calculation, or any 
-  task that requires synthesising information across multiple judgments.
-- "general" — if the query asks for a simple factual list, a filter, or a 
-  direct lookup (e.g. "which cases involve trucks", "show Supreme Court cases").
-
-Classification:"""
-
+# ── Tools ──────────────────────────────────────────────────────────────────────
+@tool
+def search_cases(query: str) -> str:
+    """Search Indian court judgments using semantic and keyword search. Use this for general queries or finding supporting precedents."""
     try:
-        response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
-        raw = response.content.strip().lower()
-        query_type = "deep_research" if "deep" in raw else "general"
-    except Exception as exc:
-        query_type = "deep_research"   # safe default — never under-delivers
-        steps.append({"type": "error", "content": f"Router fallback to deep_research: {exc}"})
+        top_k = int(os.getenv("TOP_K_RETRIEVAL", "8"))
+        vec = vector_search(query, top_k=top_k)
+        kw = keyword_search(query, top_k=top_k)
+        
+        all_hits = {r["doc_id"]: r for r in vec + kw if r}
+        return _format_hits(list(all_hits.values()), "hybrid search")
+    except Exception as e:
+        return f"Search error: {e}"
 
-    steps.append({"type": "thought", "content": f"Query classified as: **{query_type}**"})
-    return {**state, "query_type": query_type, "steps": steps}
-
-
-# ── Node 2: retriever ──────────────────────────────────────────────────────────
-def retriever_node(state: AgentState) -> AgentState:
-    """
-    Runs vector search + keyword search on every query.
-    For deep_research, adds a second keyword pass targeting adversarial patterns
-    so adverse precedents are never crowded out by supporting ones.
-    """
-    query = state["query"]
-    query_type = state["query_type"]
-    steps = list(state.get("steps", []))
-    top_k = int(os.getenv("TOP_K_RETRIEVAL", "8"))
-
-    # ── Vector search ──
-    steps.append({"type": "tool_call", "tool_name": "vector_search", "content": query})
+@tool
+def search_adverse_cases(query: str) -> str:
+    """Search specifically for adverse/unfavourable judgments (e.g. insurer absolved, policy voided, claim dismissed)."""
     try:
-        vec_results = vector_search(query, top_k=top_k)
-        vec_text = _format_hits(vec_results, "vector")
-        steps.append({"type": "tool_result", "tool_name": "vector_search", "content": vec_text[:1500]})
-    except Exception as exc:
-        vec_text = f"Vector search error: {exc}"
-        steps.append({"type": "error", "content": vec_text})
-
-    # ── Keyword (BM25) search ──
-    steps.append({"type": "tool_call", "tool_name": "keyword_search", "content": query})
-    try:
-        kw_results = keyword_search(query, top_k=top_k)
-        kw_text = _format_hits(kw_results, "keyword")
-        steps.append({"type": "tool_result", "tool_name": "keyword_search", "content": kw_text[:1500]})
-    except Exception as exc:
-        kw_text = f"Keyword search error: {exc}"
-        steps.append({"type": "error", "content": kw_text})
-
-    # ── Adversarial pass (deep_research only) ──
-    adv_text = ""
-    if query_type == "deep_research":
-        adv_query = "insurer absolved policy void no liability fundamental breach unlicensed"
-        steps.append({
-            "type": "tool_call",
-            "tool_name": "keyword_search (adversarial pass)",
-            "content": adv_query,
-        })
-        try:
-            adv_results = keyword_search(adv_query, top_k=5)
-            adv_text = _format_hits(adv_results, "adversarial-keyword")
-            steps.append({"type": "tool_result", "tool_name": "keyword_search (adversarial pass)", "content": adv_text[:1000]})
-        except Exception as exc:
-            adv_text = ""
-            steps.append({"type": "error", "content": f"Adversarial search error: {exc}"})
-
-    # --- Summary of retrieved docs ---
-    all_retrieved_ids = []
-    if 'vec_results' in locals() and vec_results: all_retrieved_ids.extend([r['doc_id'] for r in vec_results])
-    if 'kw_results' in locals() and kw_results: all_retrieved_ids.extend([r['doc_id'] for r in kw_results])
-    if 'adv_results' in locals() and adv_results: all_retrieved_ids.extend([r['doc_id'] for r in adv_results])
-    unique_docs = list(dict.fromkeys(all_retrieved_ids))
-    summary_content = f"Retrieved {len(unique_docs)} unique documents: {', '.join(unique_docs)}"
-    steps.append({"type": "retrieval_summary", "content": summary_content})
-
-    retrieved = f"{vec_text}\n\n{kw_text}"
-    if adv_text:
-        retrieved += f"\n\n[Adversarial pass — insurer-favouring judgments]\n{adv_text}"
-
-    return {**state, "retrieved_docs": retrieved, "steps": steps}
-
+        adv_query = f"{query} insurer absolved policy void no liability fundamental breach dismissed"
+        results = keyword_search(adv_query, top_k=5)
+        return _format_hits(results, "adversarial search")
+    except Exception as e:
+        return f"Adverse search error: {e}"
 
 def _format_hits(results: list, source: str) -> str:
     if not results:
-        return f"No results from {source} search."
-    lines = [f"Results from {source} search ({len(results)} hits):\n"]
+        return f"No results from {source}."
+    lines = [f"Results from {source} ({len(results)} hits):\n"]
     for i, r in enumerate(results, 1):
         score_info = f"Score: {r.get('score', 0.0):.3f}"
         lines.append(
             f"{i}. [{r['doc_id']}] ({score_info}) {r.get('case_name','')[:55]} "
-            f"({r.get('court','')[:30]}, {r.get('year','')}) | "
-            f"{r.get('text','')[:300]}…"
+            f"({r.get('court','')[:30]}, {r.get('year','')}) | {r.get('text','')[:300]}…"
         )
     return "\n".join(lines)
 
 
-# ── Node 3a: general_answerer ──────────────────────────────────────────────────
-def general_answerer_node(state: AgentState) -> AgentState:
-    """
-    Single LLM call for simple/factual queries.
-    Path: START → router → retriever → general_answerer → END
-    """
-    steps = list(state.get("steps", []))
-    steps.append({"type": "thought", "content": "Formulating direct answer from retrieved documents."})
-
+# ── Graph Nodes ────────────────────────────────────────────────────────────────
+def agent_node(state: AgentState) -> dict:
     llm = build_llm()
-    prompt = f"""You are Lexi, an AI legal research assistant specialising in Indian court judgments.
-Answer the following query using ONLY the retrieved documents below.
+    tools = [search_cases, search_adverse_cases]
+    llm_with_tools = llm.bind_tools(tools)
+    
+    sys_msg = SystemMessage(content="""You are Lexi, an AI legal research assistant specializing in Indian court judgments.
+You must handle user queries flexibly and naturally:
+- If the user asks a simple or general question (e.g. "Which cases involve commercial vehicles?"), use search_cases and answer directly.
+- If the user asks for deep legal research or precedents, you must dynamically research both sides. Use search_cases for supporting precedents, and ALWAYS use search_adverse_cases to check for opposing precedents. Then output your final answer formatted strictly with three sections:
+  ### Supporting Precedents
+  ### Adverse Precedents
+  ### Strategy Recommendation
 
-Query: {state['query']}
-
-Retrieved Documents:
-{state['retrieved_docs'][:8000]}
-
-Rules:
-- Cite documents as [DOC_XXX]
-- Do not fabricate any case or legal principle not in the retrieved list
-- Be concise and direct
-
-Answer:"""
-
+Always cite documents exactly as [DOC_XXX].""")
+    
     try:
-        response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
-        answer = response.content
+        response = _invoke_with_retry(llm_with_tools, [sys_msg] + state["messages"])
+        
+        steps = []
+        if response.tool_calls:
+            for tc in response.tool_calls:
+                steps.append({"type": "tool_call", "tool_name": tc["name"], "content": str(tc["args"])})
+        else:
+            steps.append({"type": "thought", "content": "Synthesising final legal response."})
+            
+        return {"messages": [response], "steps": steps}
     except Exception as exc:
-        answer = f"Error generating answer: {exc}"
-        steps.append({"type": "error", "content": str(exc)})
+        return {"error": str(exc), "steps": [{"type": "error", "content": str(exc)}]}
 
-    return {**state, "final_answer": answer, "steps": steps}
+def tools_node(state: AgentState) -> dict:
+    last_msg = state["messages"][-1]
+    tool_msgs = []
+    steps = []
+    
+    tools_map = {"search_cases": search_cases, "search_adverse_cases": search_adverse_cases}
+    
+    for tc in last_msg.tool_calls:
+        tool_fn = tools_map.get(tc["name"])
+        if tool_fn:
+            result = tool_fn.invoke(tc["args"])
+            tool_msgs.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+            steps.append({"type": "tool_result", "tool_name": tc["name"], "content": result[:500] + "..."})
+            
+    return {"messages": tool_msgs, "steps": steps}
 
+def should_continue(state: AgentState) -> str:
+    if state.get("error"):
+        return END
+    last_msg = state["messages"][-1]
+    if getattr(last_msg, "tool_calls", None):
+        return "tools"
+    return END
 
-# ── Node 3b: supporting_analyzer ──────────────────────────────────────────────
-def supporting_analyzer_node(state: AgentState) -> AgentState:
-    """
-    Extracts judgments that support the client's case.
-    Path: retriever → supporting_analyzer → adverse_analyzer → strategy_synthesizer → END
-    """
-    steps = list(state.get("steps", []))
-    steps.append({"type": "thought", "content": "Extracting SUPPORTING precedents from retrieved judgments."})
-
-    llm = build_llm()
-    prompt = f"""You are Lexi, an AI legal research assistant specialising in Indian court judgments.
-
-Research Query: {state['query']}
-
-Retrieved Judgments:
-{state['retrieved_docs'][:8000]}
-
-Write the Supporting Precedents section. For each supporting judgment include:
-- Citation: [DOC_XXX] Case Name (Court, Year)
-- Legal principle the judgment establishes
-- Which specific facts align with the client's situation
-- How this judgment strengthens the argument
-
-Only cite documents that appear in the retrieved list above. Do not fabricate cases.
-
-### Supporting Precedents"""
-
-    try:
-        response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
-        supporting = response.content
-    except Exception as exc:
-        supporting = f"[Error generating supporting analysis: {exc}]"
-        steps.append({"type": "error", "content": str(exc)})
-
-    steps.append({"type": "thought", "content": "Supporting precedents section complete."})
-    return {**state, "supporting_section": supporting, "steps": steps}
-
-
-# ── Node 4: adverse_analyzer ───────────────────────────────────────────────────
-def adverse_analyzer_node(state: AgentState) -> AgentState:
-    """
-    Identifies and honestly assesses judgments that work AGAINST the client.
-    Dedicated node ensures adverse cases are never crowded out by supporting ones.
-    """
-    steps = list(state.get("steps", []))
-    steps.append({"type": "thought", "content": "Extracting ADVERSE precedents — cases the opposing counsel could use."})
-
-    llm = build_llm()
-    prompt = f"""You are Lexi, an AI legal research assistant.
-
-Research Query: {state['query']}
-
-Retrieved Judgments (including adversarial pass results):
-{state['retrieved_docs'][:8000]}
-
-Write the Adverse Precedents section. A well-prepared legal team must know both sides.
-For each adverse judgment include:
-- Citation: [DOC_XXX] Case Name (Court, Year)
-- Risk Level: HIGH / MEDIUM / LOW
-- Why this precedent hurts the client's case
-- How to distinguish or counter it in argument
-
-Be honest — do not suppress unfavourable cases. Only cite from the retrieved list.
-
-### Adverse Precedents"""
-
-    try:
-        response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
-        adverse = response.content
-    except Exception as exc:
-        adverse = f"[Error generating adverse analysis: {exc}]"
-        steps.append({"type": "error", "content": str(exc)})
-
-    steps.append({"type": "thought", "content": "Adverse precedents section complete."})
-    return {**state, "adverse_section": adverse, "steps": steps}
-
-
-# ── Node 5: strategy_synthesizer ──────────────────────────────────────────────
-def strategy_synthesizer_node(state: AgentState) -> AgentState:
-    """
-    Final synthesis node. Combines supporting + adverse into actionable strategy memo.
-    """
-    steps = list(state.get("steps", []))
-    steps.append({"type": "thought", "content": "Synthesising final strategy recommendation."})
-
-    llm = build_llm()
-    prompt = f"""You are Lexi, an AI legal research assistant.
-
-Research Query: {state['query']}
-
-Supporting Precedents Identified:
-{state['supporting_section'][:2000]}
-
-Adverse Precedents Identified:
-{state['adverse_section'][:2000]}
-
-Write the Strategy Recommendation section:
-- Priority arguments to make (ranked by strength)
-- Realistic compensation range based on cited judgments
-- Key risks the client must be aware of
-- Recommended next steps for the legal team
-
-### Strategy Recommendation"""
-
-    try:
-        response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
-        strategy = response.content
-    except Exception as exc:
-        strategy = f"[Error generating strategy: {exc}]"
-        steps.append({"type": "error", "content": str(exc)})
-
-    final_answer = (
-        f"### Supporting Precedents\n\n{state['supporting_section']}\n\n"
-        f"---\n\n"
-        f"### Adverse Precedents\n\n{state['adverse_section']}\n\n"
-        f"---\n\n"
-        f"### Strategy Recommendation\n\n{strategy}"
-    )
-
-    steps.append({"type": "thought", "content": "Research memo complete — all three sections generated."})
-    return {**state, "strategy_section": strategy, "final_answer": final_answer, "steps": steps}
-
-
-# ── Conditional edge function ──────────────────────────────────────────────────
-def route_after_retrieval(state: AgentState) -> str:
-    """
-    The only branching point in the graph.
-    Returns node name based on the router's LLM classification.
-    """
-    return "general_answerer" if state["query_type"] == "general" else "supporting_analyzer"
-
-
-# ── Build & compile the graph ──────────────────────────────────────────────────
 def build_graph():
     graph = StateGraph(AgentState)
-
-    # Nodes
-    graph.add_node("router",               router_node)
-    graph.add_node("retriever",            retriever_node)
-    graph.add_node("general_answerer",     general_answerer_node)
-    graph.add_node("supporting_analyzer",  supporting_analyzer_node)
-    graph.add_node("adverse_analyzer",     adverse_analyzer_node)
-    graph.add_node("strategy_synthesizer", strategy_synthesizer_node)
-
-    # Edges
-    graph.add_edge(START,       "router")
-    graph.add_edge("router",    "retriever")
-
-    graph.add_conditional_edges(
-        "retriever",
-        route_after_retrieval,
-        {
-            "general_answerer":    "general_answerer",
-            "supporting_analyzer": "supporting_analyzer",
-        },
-    )
-
-    graph.add_edge("general_answerer",     END)
-    graph.add_edge("supporting_analyzer",  "adverse_analyzer")
-    graph.add_edge("adverse_analyzer",     "strategy_synthesizer")
-    graph.add_edge("strategy_synthesizer", END)
-
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tools_node)
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", should_continue)
+    graph.add_edge("tools", "agent")
     return graph.compile()
 
 
-# ── Public API (unchanged interface — app.py needs no edits) ───────────────────
+# ── Public API ─────────────────────────────────────────────────────────────────
 _graph = None
 
 
@@ -472,23 +240,21 @@ def run_agent(query: str) -> dict:
         _graph = build_graph()
 
     initial_state: AgentState = {
-        "query": query,
-        "query_type": "",
-        "retrieved_docs": "",
-        "supporting_section": "",
-        "adverse_section": "",
-        "strategy_section": "",
-        "final_answer": "",
+        "messages": [HumanMessage(content=query)],
         "steps": [],
         "error": None,
     }
 
     try:
         final_state = _graph.invoke(initial_state)
+        if final_state.get("error"):
+            return {"answer": f"Error: {final_state['error']}", "steps": final_state["steps"], "error": final_state["error"]}
+            
+        answer = final_state["messages"][-1].content
         return {
-            "answer": final_state["final_answer"],
+            "answer": answer,
             "steps": final_state["steps"],
-            "error": final_state.get("error"),
+            "error": None,
         }
     except Exception as exc:
         msg = str(exc)

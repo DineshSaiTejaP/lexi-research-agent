@@ -6,7 +6,7 @@
 ## 1. Architecture Choice: LangGraph State Machine
 
 ### Decision
-I built the agent using **LangGraph** with explicit nodes and edges, rather than a fixed pipeline or a pure ReAct loop.
+I updated the agent to use a **LangGraph Tool-Calling (ReAct)** architecture. The LLM acts as a central decision-maker equipped with distinct search tools, rather than moving through hard-coded pipeline nodes.
 
 ### Graph Topology
 ```
