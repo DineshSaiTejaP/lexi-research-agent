@@ -1,7 +1,7 @@
 # Lexi — Legal Precedent Research Agent
 
 > **GitHub:** https://github.com/DineshSaiTejaP/lexi-research-agent  
-> **Live Demo:** [ADD_YOUR_STREAMLIT_URL_HERE]
+> **Live Demo:** https://lexi-research-agent-assessment-dinesh.streamlit.app/
 
 An AI-powered legal research agent that searches a corpus of 50+ Indian court judgments to identify supporting and adverse precedents, built for the Lexi Backend Engineer take-home assessment.
 
